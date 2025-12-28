@@ -50,9 +50,21 @@ const leafletStyle = `
   .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; }
   .marker-pin.small::after { width: 16px; height: 16px; margin: 5px 0 0 5px; }
   .leaflet-popup-content-wrapper { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
+  
   .custom-user-marker { background: transparent; border: none; }
-  .user-pulse { background: #00d2ff; width: 18px; height: 18px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px rgba(0, 210, 255, 0.8); animation: pulse 2s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 210, 255, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(0, 210, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 210, 255, 0); } }
+  
+  /* 更新：定位點改為紅色 (#ff4d4d) 與霓虹紅波紋 */
+  .user-pulse {
+    background: #ff4d4d; width: 18px; height: 18px; border-radius: 50%;
+    border: 3px solid white;
+    box-shadow: 0 0 15px rgba(255, 77, 77, 0.8);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.7); }
+    70% { box-shadow: 0 0 0 15px rgba(255, 77, 77, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0); }
+  }
   .leaflet-bottom.leaflet-right { bottom: 30px; right: 20px; z-index: 500; }
 `;
 
@@ -90,7 +102,7 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
-const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fpp-PaPvo4bOk95Wi9Gh8TV-bH35gukiFG0xfHlEQqOX8hQ/exec'; // <-- 填入您的 GAS 網址 (/exec)
+const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fpp-PaPvo4bOk95Wi9Gh8TV-bH35gukiFG0xfHlEQqOX8hQ/exec'; // <-- 請填入您的 GAS 網址
 
 const SEARCH_RADIUS_KM = 3; 
 const AUTO_REFRESH_INTERVAL = 60000; 
@@ -104,13 +116,18 @@ export default function App() {
   const [viewMode, setViewMode] = useState('map');
   const [dataSource, setDataSource] = useState('雷達掃描中...');
   const [userLocation, setUserLocation] = useState(null);
-  const [showInstructions, setShowInstructions] = useState(false); // 控制說明視窗
+  const [showInstructions, setShowInstructions] = useState(false);
   
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const userMarkerRef = useRef(null);
   const markersRef = useRef(new Map()); 
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
+
+  // 更新：設定網頁頁籤名稱
+  useEffect(() => {
+    document.title = "小企鵝停車雷達";
+  }, []);
 
   // 1. 載入引擎
   useEffect(() => {
@@ -166,13 +183,13 @@ export default function App() {
     }
   }, [isLeafletLoaded]);
 
-  // 4. 自動更新
+  // 4. 定時自動更新
   useEffect(() => {
     const timer = setInterval(() => { if (currentCity) fetchParkingData(currentCity.code, true); }, AUTO_REFRESH_INTERVAL);
     return () => clearInterval(timer);
   }, [currentCity]);
 
-  // 5. 藍點
+  // 5. 使用者定位點更新 (紅色波紋)
   useEffect(() => {
     if (!userLocation || !mapInstanceRef.current || !window.L) return;
     const L = window.L;
@@ -220,7 +237,7 @@ export default function App() {
 
   const handleListItemClick = (lot) => { setViewMode('map'); if (mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16, { animate: true }); };
 
-  // 10. 標記管理
+  // 10. 標記同步
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -292,7 +309,7 @@ export default function App() {
                <div key={lot.id} onClick={() => handleListItemClick(lot)} className="bg-slate-800/60 backdrop-blur-md p-5 rounded-3xl border border-slate-700 hover:border-sky-500/50 transition-all active:scale-95 group">
                  <div className="flex justify-between items-start">
                     <div className="flex-1 mr-3">
-                      <div className="flex items-center gap-2 mb-1"><span className="text-xs font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md">#{lot.id.toString().slice(-4)}</span>{lot.distance && <span className="text-xs font-black text-indigo-400">📡 {lot.distance.toFixed(1)} KM</span>}</div>
+                      <div className="flex items-center gap-2 mb-1"><span className="text-xs font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md">#{lot.id.toString().slice(-4)}</span>{lot.distance && <span className="text-xs font-black text-indigo-400">📡 {lot.distance.toFixed(1) || '0.0'} KM</span>}</div>
                       <h3 className="font-black text-slate-100 text-lg group-hover:text-sky-400 transition-colors">{lot.name}</h3>
                       <p className="text-xs text-slate-400 mt-2 line-clamp-1 flex items-center gap-1"><MapPin size={10} /> {lot.address || '位置未知'}</p>
                     </div>
@@ -305,40 +322,33 @@ export default function App() {
         </div>
       </div>
 
-      {/* 操作說明彈窗 (Instructions Modal) */}
+      {/* 操作說明彈窗 */}
       {showInstructions && (
-        <div className="absolute inset-0 z-[2000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md transition-opacity">
-          <div className="bg-slate-800 border border-sky-500/50 rounded-[32px] w-full max-w-md overflow-hidden shadow-[0_0_40px_rgba(14,165,233,0.3)] animate-in zoom-in duration-300">
+        <div className="absolute inset-0 z-[2000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md">
+          <div className="bg-slate-800 border border-sky-500/50 rounded-[32px] w-full max-w-md overflow-hidden shadow-[0_0_40px_rgba(14,165,233,0.3)]">
             <div className="p-6 space-y-6">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
                    <div className="bg-sky-500/20 p-2 rounded-xl"><Info className="text-sky-400" size={24} /></div>
                    <h2 className="text-xl font-black text-white">雷達操作手冊</h2>
                 </div>
-                <button onClick={() => setShowInstructions(false)} className="p-2 text-slate-400 hover:text-white transition-colors"><X size={24} /></button>
+                <button onClick={() => setShowInstructions(false)} className="p-2 text-slate-400 hover:text-white"><X size={24} /></button>
               </div>
-              
-              <div className="space-y-4 text-sm leading-relaxed text-slate-300">
+              <div className="space-y-4 text-sm text-slate-300">
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
                   <div className="text-2xl">🐧</div>
-                  <div><p className="font-bold text-sky-400 mb-1">智慧定位</p><p>系統自動鎖定您所在地點，掃描方圓 3 公里內的即時停車空位。</p></div>
+                  <div><p className="font-bold text-sky-400 mb-1">智慧定位</p><p>雷達會標示為 <span className="text-red-500 font-bold">紅色</span> 點。系統自動鎖定您的位置，掃描方圓 3 公里內的即時空位。</p></div>
                 </div>
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
                   <div className="text-2xl">⚡</div>
-                  <div><p className="font-bold text-sky-400 mb-1">自動更新</p><p>每 60 秒發射一次雷達波，獲取最新車位資訊，駕駛中無需手動操作。</p></div>
+                  <div><p className="font-bold text-sky-400 mb-1">自動更新</p><p>每 60 秒發射一次雷達波，獲取最新數據，無需手動重新整理。</p></div>
                 </div>
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
-                  <div className="text-2xl">🎨</div>
-                  <div><p className="font-bold text-sky-400 mb-1">顏色辨識</p><p>
-                    <span className="text-[#10b981] font-bold">● 綠色</span>：車位充裕<br/>
-                    <span className="text-[#f59e0b] font-bold">● 黃色</span>：車位緊張<br/>
-                    <span className="text-[#f43f5e] font-bold">● 紅色</span>：暫無車位<br/>
-                    <span className="text-[#94a3b8] font-bold">● 灰色</span>：狀態未知（小標記）
-                  </p></div>
+                  <div className="text-2xl">⭐</div>
+                  <div><p className="font-bold text-sky-400 mb-1">推薦功能</p><p>切換至「推薦」分頁，可依距離遠近查看精選的停車區塊。</p></div>
                 </div>
               </div>
-
-              <button onClick={() => setShowInstructions(false)} className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-all">啟動掃描</button>
+              <button onClick={() => setShowInstructions(false)} className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">啟動掃描</button>
             </div>
           </div>
         </div>
