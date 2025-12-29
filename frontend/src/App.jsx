@@ -47,12 +47,11 @@ const leafletStyle = `
   }
   /* 原本的灰色泡泡 */
   .marker-pin.grey { background-color: #94a3b8 !important; width: 34px; height: 34px; margin: -17px 0 0 -17px; }
-  .marker-pin.grey .marker-text { font-size: 14px; }
   
   /* 額外新增的咖啡色 P 泡泡 */
   .marker-pin.coffee {
-    background-color: #78350f !important; /* 咖啡色 */
-    width: 28px; height: 28px; margin: -14px 0 0 -14px; /* 小顆一點 */
+    background-color: #78350f !important;
+    width: 28px; height: 28px; margin: -14px 0 0 -14px;
   }
   .marker-pin.coffee .marker-text {
     color: white; text-shadow: none; font-size: 14px; font-weight: 800;
@@ -73,6 +72,12 @@ const leafletStyle = `
     0% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.7); }
     70% { box-shadow: 0 0 0 20px rgba(255, 51, 51, 0); }
     100% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0); }
+  }
+  .btn-locate-glow {
+    background: #ff3333 !important;
+    color: white !important;
+    border-color: #ff6666 !important;
+    box-shadow: 0 0 15px rgba(255, 51, 51, 0.5) !important;
   }
 `;
 
@@ -102,6 +107,7 @@ export default function App() {
   const [isInitializing, setIsInitializing] = useState(true); 
   const [userLocation, setUserLocation] = useState(null);
   const [viewMode, setViewMode] = useState('map');
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -139,7 +145,7 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // 2. 自動化排程
+  // 2. 自動化排程 (定位啟動)
   useEffect(() => {
     if (!isLeafletLoaded) return;
 
@@ -161,22 +167,17 @@ export default function App() {
     };
     startup();
 
+    // 20s 更新定位
     const tLoc = setInterval(() => {
       navigator.geolocation.getCurrentPosition((p) => {
         setUserLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
       }, null, { enableHighAccuracy: true });
     }, 20000);
 
+    // 60s 更新資料
     const tData = setInterval(() => { fetchParkingData(currentCity.code, true); }, 60000);
 
-    // 視野自動同步
-    const tMap = setInterval(() => {
-      if (userLocation && mapInstanceRef.current && viewMode === 'map') {
-        mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 13, { animate: true });
-      }
-    }, 60000);
-
-    return () => { clearInterval(tLoc); clearInterval(tData); clearInterval(tMap); };
+    return () => { clearInterval(tLoc); clearInterval(tData); };
   }, [isLeafletLoaded, currentCity.code]);
 
   // 3. 初始化地圖
@@ -191,7 +192,7 @@ export default function App() {
     }
   }, [isLeafletLoaded, isInitializing]);
 
-  // 4. 資料處理與分類視覺化 (核心邏輯更新)
+  // 4. 資料處理與分類視覺化
   useEffect(() => {
     const dataArray = Array.isArray(allParkingData) ? allParkingData : [];
     const processed = dataArray.map(lot => {
@@ -201,14 +202,13 @@ export default function App() {
       const plat = Number(lot?.lat);
       const plng = Number(lot?.lng);
       const name = String(lot?.name || "未知");
-      const isDynamicCapable = !!lot.isDynamicCapable; // 來自後端的旗標
+      const isDynamicCapable = !!lot.isDynamicCapable; 
 
-      let color = '#78350f'; // 預設咖啡色 (額外新增的全量靜態點位)
+      let color = '#78350f'; // 預設咖啡色 (額外場站)
       let markerType = 'coffee';
       let percentage = total > 0 ? available / total : 1; 
 
       if (!isUnknown) {
-        // 動態資料：綠黃紅
         markerType = 'dynamic';
         if (available === 0) color = '#f43f5e';
         else if (total > 0) {
@@ -217,7 +217,6 @@ export default function App() {
           else color = '#10b981';
         } else color = '#10b981'; 
       } else if (isDynamicCapable) {
-        // 原本就有偵測，但目前無位子的：灰色
         color = '#94a3b8';
         markerType = 'grey';
       }
@@ -247,7 +246,26 @@ export default function App() {
     finally { setLoading(false); }
   };
 
-  // 6. 導航功能
+  // 6. 手動定位動作 (NEW)
+  const handleLocateMe = () => {
+    if (!navigator.geolocation) return;
+    setLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const loc = { lat: p.coords.latitude, lng: p.coords.longitude };
+        setUserLocation(loc);
+        if (mapInstanceRef.current) mapInstanceRef.current.setView([loc.lat, loc.lng], 15, { animate: true });
+        setLoading(false);
+        const utterance = new SpeechSynthesisUtterance("已重新定位雷達中心。");
+        utterance.lang = 'zh-TW';
+        window.speechSynthesis.speak(utterance);
+      },
+      () => setLoading(false),
+      { enableHighAccuracy: true }
+    );
+  };
+
+  // 7. 導航功能
   const handleNavigate = (lat, lng, name) => {
     if (!lat || !lng) return;
     const utterance = new SpeechSynthesisUtterance(`小企鵝即刻為您導航至 ${String(name)}。`);
@@ -261,10 +279,10 @@ export default function App() {
     return () => { delete window.handleNavigateGlobal; }; 
   }, []);
 
-  // 7. 點擊標記播報
+  // 8. 點擊標記播報
   const handleMarkerClick = (lot) => {
     let speakText = `${lot.name}。`;
-    if (lot.markerType === 'coffee') speakText += `此為靜態場站，無即時數字。費率為：${lot.fare}。`;
+    if (lot.markerType === 'coffee') speakText += `此為全量資料庫場站。費率為：${lot.fare}。`;
     else if (lot.isUnknown) speakText += `偵測場站目前無即時資訊。費率為：${lot.fare}。`;
     else speakText += `目前剩餘 ${lot.available} 格。費率為：${lot.fare}。`;
     const utterance = new SpeechSynthesisUtterance(speakText);
@@ -272,7 +290,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 8. 標記同步渲染 (咖啡色 P 泡泡邏輯)
+  // 9. 標記同步渲染
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -297,14 +315,14 @@ export default function App() {
         <div style="min-width: 210px; padding: 12px; color: white;">
           <b style="font-size:16px; color:#38bdf8; display:block; margin-bottom:4px;">${lot.name}</b>
           <div style="font-size:11px; color: #94a3b8; margin-bottom:8px;">
-            ${isCoffee ? '🏢 固定位置場站' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
+            ${isCoffee ? '🏢 全量資料場站' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
           </div>
           <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px; border-left: 4px solid ${lot.color}; line-height:1.4;">
             ${lot.fare}
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid rgba(255,255,255,0.1); padding-top:12px; margin-top:10px;">
              <div><div style="font-size:10px; color:#64748b;">${isCoffee ? '類型' : '剩餘位子'}</div><div style="font-size:24px; font-weight:900; color:${lot.color}; line-height:1;">${isCoffee ? 'P' : (isGrey ? '?' : lot.available)}</div></div>
-             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px; box-shadow: 0 4px 15px rgba(56,189,248,0.4);">導航 GO</button>
+             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px;">導航 GO</button>
           </div>
         </div>
       `;
@@ -328,8 +346,8 @@ export default function App() {
     return (
       <div className="h-screen w-screen bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
         <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
-        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
-        <p className="text-slate-500 text-sm animate-pulse">正在鎖定衛星座標並同步縣市資訊...</p>
+        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達定位中</h1>
+        <p className="text-slate-500 text-sm animate-pulse">正在向衛星請求座標並掃描周邊停車場...</p>
       </div>
     );
   }
@@ -347,12 +365,14 @@ export default function App() {
               <h1 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 leading-none">小企鵝停車雷達</h1>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">動態偵測中</span>
+                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">{currentCity.name} · 雷達啟動中</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
+             <button onClick={handleLocateMe} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-red-500 active:scale-95 shadow-sm"><LocateFixed size={18} /></button>
              <button onClick={() => fetchParkingData(currentCity.code)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
+             <button onClick={() => setShowInstructions(true)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm"><Info size={18} /></button>
           </div>
         </div>
         <div className="flex gap-3 h-10">
@@ -372,9 +392,6 @@ export default function App() {
             <button onClick={() => setViewMode('list')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'list' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>清單</button>
           </div>
         </div>
-        <div className="mt-2 text-[9px] text-slate-400 flex items-center gap-1 opacity-80 font-medium">
-          <Zap size={10} className="text-sky-400" /> <span className="text-amber-600 font-bold">咖啡 P</span> 為全量場站，其餘標註 * 提供即時數字
-        </div>
       </div>
       
       <div className="flex-1 relative bg-slate-900">
@@ -382,7 +399,7 @@ export default function App() {
            <div ref={mapContainerRef} className="w-full h-full" />
            {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl">更新資料中...</div>}
         </div>
-        <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-48 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
+        <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-44 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
            <div className="space-y-3">
              {parkingData.map(lot => (
                <div key={String(lot.id)} onClick={() => { setViewMode('map'); if(mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16, {animate:true}); }} className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700 active:scale-95 transition-all">
@@ -405,6 +422,44 @@ export default function App() {
            </div>
         </div>
       </div>
+
+      {showInstructions && (
+        <div className="absolute inset-0 z-[2000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md">
+          <div className="bg-slate-800 border border-sky-500/50 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in duration-300">
+            <div className="p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-3"><Info className="text-sky-400" size={24} /><h2 className="text-xl font-black text-white">使用說明</h2></div>
+                <button onClick={() => setShowInstructions(false)} className="p-2 text-slate-400 hover:text-white"><X size={24} /></button>
+              </div>
+              <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
+                <div className="flex gap-4 items-start bg-slate-900/50 p-3 rounded-2xl">
+                  <div className="text-2xl">🐧</div>
+                  <div><p className="font-bold text-sky-400">自動定位模式</p><p>系統啟動後會自動抓取您的位置，判定所在縣市並同步 5 公里內的停車場。</p></div>
+                </div>
+                <div className="flex gap-4 items-start bg-slate-900/50 p-3 rounded-2xl">
+                  <div className="text-2xl text-red-500"><LocateFixed size={24} /></div>
+                  <div><p className="font-bold text-white">手動定位按鈕</p><p>當您移動或視野偏移時，按此按鈕可重新鎖定紅點中心。</p></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="flex items-center gap-2 bg-emerald-500/20 p-2 rounded-xl border border-emerald-500/30">
+                    <div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-[10px]">綠色：位子充足</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-rose-500/20 p-2 rounded-xl border border-rose-500/30">
+                    <div className="w-3 h-3 rounded-full bg-rose-500"></div><span className="text-[10px]">紅色：目前滿位</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-amber-700/20 p-2 rounded-xl border border-amber-700/30">
+                    <div className="w-3 h-3 rounded-full bg-amber-700"></div><span className="text-[10px]">咖啡 P：靜態場站</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-500/20 p-2 rounded-xl border border-slate-500/30">
+                    <div className="w-3 h-3 rounded-full bg-slate-400"></div><span className="text-[10px]">灰色 ?：連線暫斷</span>
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setShowInstructions(false)} className="w-full bg-sky-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">開始使用</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
