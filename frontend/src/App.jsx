@@ -242,7 +242,30 @@ export default function App() {
 
   useEffect(() => { window.handleNavigateGlobal = handleNavigate; return () => { delete window.handleNavigateGlobal; }; }, []);
 
-  // 5. 標記渲染同步 (包含彈出視窗位移優化)
+  // ---------------------------------------------------------
+  // [優化修正] 獨立的使用者定位紅點 Effect
+  // 確保地圖一旦顯示 (isInitializing 為 false)，紅點就立即渲染
+  // ---------------------------------------------------------
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.L || !userLocation) return;
+    const L = window.L;
+    const map = mapInstanceRef.current;
+
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+    } else {
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { 
+        icon: L.divIcon({ 
+          className: 'custom-user-marker', 
+          html: `<div class="user-pulse"></div>`, 
+          iconSize: [20, 20] 
+        }), 
+        zIndexOffset: 1000 
+      }).addTo(map);
+    }
+  }, [userLocation, isInitializing]); // 監聽 isInitializing 確保地圖容器載入後立即執行
+
+  // 停車場標記渲染同步 (不含使用者紅點邏輯)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -286,18 +309,14 @@ export default function App() {
         const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) })
           .bindPopup(popupHtml, { 
             autoPan: true, 
-            autoPanPadding: L.point(50, 150), // 預留空間確保視窗不被頂部切掉
+            autoPanPadding: L.point(50, 150), 
             offset: L.point(0, -5) 
           })
           .addTo(map);
         currentMarkers.set(String(lot.id), marker);
       }
     });
-    if (userLocation) {
-      if (userMarkerRef.current) userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
-      else userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: L.divIcon({ className: 'custom-user-marker', html: `<div class="user-pulse"></div>`, iconSize: [20, 20] }), zIndexOffset: 1000 }).addTo(map);
-    }
-  }, [parkingData, userLocation]);
+  }, [parkingData]);
 
   if (isInitializing) {
     return (
