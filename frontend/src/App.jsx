@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X, Navigation2 } from 'lucide-react';
 
 // ---------------------------------------------------------
-// 縣市中心點定義 (僅用於啟動判定)
+// 縣市基準點 (用於啟動時判定縣市)
 // ---------------------------------------------------------
 const TAIWAN_CITIES = [
   { code: 'Keelung', name: '基隆市', lat: 25.1276, lng: 121.7392 },
@@ -45,24 +45,19 @@ const leafletStyle = `
     position: absolute; z-index: 10; font-weight: 900; font-size: 15px;
     transform: rotate(45deg); color: #0f172a; text-shadow: 0 0 2px white;
   }
-  /* 灰色偵測泡泡 */
   .marker-pin.grey { background-color: #94a3b8 !important; width: 34px; height: 34px; margin: -17px 0 0 -17px; }
-  
-  /* 藍色靜態泡泡 (TDX 全量場站) */
   .marker-pin.blue-static { background-color: #3b82f6 !important; width: 28px; height: 28px; margin: -14px 0 0 -14px; }
   .marker-pin.blue-static .marker-text { color: white; text-shadow: none; font-size: 14px; font-weight: 800; }
 
-  /* 紫色小圓圈 (試算表額外補充場站) */
+  /* 紫色小圓圈 (試算表補充場站) */
   .marker-pin.purple-dot {
     background-color: #a855f7 !important;
     width: 24px; height: 24px; margin: -12px 0 0 -12px;
-    border-radius: 50% !important;
-    transform: none !important;
+    border-radius: 50% !important; transform: none !important;
     border: 2px solid white;
   }
   .marker-pin.purple-dot .marker-text {
-    color: white; text-shadow: none; font-size: 14px; font-weight: 800;
-    transform: none !important;
+    color: white; text-shadow: none; font-size: 14px; font-weight: 800; transform: none !important;
   }
   
   .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; opacity: 0.2; }
@@ -94,7 +89,7 @@ const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fp
 const SEARCH_RADIUS_KM = 5; 
 
 export default function App() {
-  const [detectedCity, setDetectedCity] = useState(TAIWAN_CITIES[13]); // 預設台南
+  const [detectedCity, setDetectedCity] = useState(TAIWAN_CITIES[13]); 
   const [allParkingData, setAllParkingData] = useState([]);
   const [parkingData, setParkingData] = useState([]); 
   const [loading, setLoading] = useState(false);
@@ -193,19 +188,19 @@ export default function App() {
 
       let color = '#3b82f6'; 
       let markerType = 'blue-static';
-      if (isExtraStatic) markerType = 'purple-dot';
-
-      let percentage = total > 0 ? available / total : 1; 
-
-      if (!isUnknown && !isExtraStatic) {
+      if (isExtraStatic) {
+        markerType = 'purple-dot';
+        color = '#a855f7';
+      } else if (!isUnknown) {
         markerType = 'dynamic';
+        const percentage = total > 0 ? available / total : 1;
         if (available === 0) color = '#f43f5e';
         else if (total > 0) {
           if (percentage < 0.1) color = '#f43f5e';
           else if (percentage < 0.3) color = '#f59e0b';
           else color = '#10b981';
         } else color = '#10b981'; 
-      } else if (isDynamicCapable && !isExtraStatic) {
+      } else if (isDynamicCapable) {
         color = '#94a3b8';
         markerType = 'grey';
       }
@@ -271,7 +266,7 @@ export default function App() {
 
       const iconSettings = { 
         className: 'custom-marker', 
-        html: `<div class="marker-pin ${isPurple ? 'purple-dot' : (isBlue ? 'blue-static' : (isGrey ? 'grey' : ''))}" style="background-color: ${lot.color};"><span class="marker-text">${isPurple ? 'P' : (isBlue ? 'P' : (isGrey ? '?' : lot.available))}</span></div>`, 
+        html: `<div class="marker-pin ${isPurple ? 'purple-dot' : (isBlue ? 'blue-static' : (isGrey ? 'grey' : ''))}" style="background-color: ${lot.color};"><span class="marker-text">${isPurple || isBlue ? 'P' : (isGrey ? '?' : lot.available)}</span></div>`, 
         iconSize: isPurple ? [24, 24] : (isBlue ? [28, 28] : [42, 42]), 
         iconAnchor: isPurple ? [12, 12] : (isBlue ? [14, 28] : [21, 42]), 
         popupAnchor: [0, -28] 
@@ -281,7 +276,7 @@ export default function App() {
         <div style="min-width: 210px; padding: 12px; color: white;">
           <b style="font-size:16px; color:#38bdf8; display:block; margin-bottom:4px;">${lot.name}</b>
           <div style="font-size:11px; color: #94a3b8; margin-bottom:8px;">
-            ${isPurple ? '🏢 專屬試算表點位' : (isBlue ? '🏢 全量資料庫場站' : `🏢 總位數: ${lot.total || '未知'}`)} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
+            ${isPurple ? '🏢 專屬補充點位' : (isBlue ? '🏢 全量資料庫場站' : `🏢 總位數: ${lot.total || '未知'}`)} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
           </div>
           <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px; border-left: 4px solid ${lot.color}; line-height:1.4;">
             ${lot.fare}
@@ -314,7 +309,7 @@ export default function App() {
       <div className="h-screen w-screen bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
         <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
         <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
-        <p className="text-slate-500 text-sm animate-pulse uppercase font-black tracking-widest">正在鎖定衛星座標並同步週邊資訊...</p>
+        <p className="text-slate-500 text-sm animate-pulse uppercase font-black tracking-widest">正在鎖定座標並整合全台資訊...</p>
       </div>
     );
   }
@@ -331,17 +326,16 @@ export default function App() {
               <h1 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 leading-none">小企鵝停車雷達</h1>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">定位：{detectedCity.name}</span>
+                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">區域：{detectedCity.name}</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
-             <button onClick={handleLocateMe} title="手動重新定位" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-red-500 active:scale-95 shadow-sm transition-all"><LocateFixed size={18} /></button>
+             <button onClick={handleLocateMe} title="重新定位" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-red-500 active:scale-95 shadow-sm transition-all"><LocateFixed size={18} /></button>
              <button onClick={() => fetchParkingData(detectedCity.code)} title="刷新資料" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm transition-all"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
              <button onClick={() => setShowInstructions(true)} title="說明" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm transition-all"><Info size={18} /></button>
           </div>
         </div>
-        
         <div className="flex gap-2 h-10 items-center justify-center">
           <div className="bg-slate-800/50 p-1 rounded-xl flex border border-slate-700 h-10 w-full">
             <button onClick={() => setViewMode('map')} className={`flex-1 rounded-lg text-[10px] font-black transition-all ${viewMode === 'map' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>雷達圖層</button>
@@ -387,7 +381,7 @@ export default function App() {
               <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-xl border border-slate-700 items-center">
                   <div className="text-2xl text-purple-500">●</div>
-                  <div><p className="font-bold text-white underline underline-offset-4">紫色小圓點</p><p>來自您專屬試算表的補充場站資訊，補足即時系統未涵蓋的區域。</p></div>
+                  <div><p className="font-bold text-white underline underline-offset-4">紫色小圓圈</p><p>來自您專屬試算表的補充場站，補足即時系統未涵蓋的區域。</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2 font-bold text-[10px]">
                    <div className="bg-emerald-500/20 p-2 rounded-xl text-emerald-400 border border-emerald-500/20">● 綠色：位子充足</div>
