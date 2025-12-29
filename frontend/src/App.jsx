@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X } from 'lucide-react';
 
 // ---------------------------------------------------------
-// 縣市資料定義 (包含經緯度座標供距離計算與切換)
+// 縣市資料定義
 // ---------------------------------------------------------
 const TAIWAN_CITIES = [
   { code: 'Keelung', name: '基隆市 *', lat: 25.1276, lng: 121.7392, hasDynamic: true },
@@ -36,36 +36,39 @@ const leafletStyle = `
     position: absolute; transform: rotate(-45deg);
     left: 50%; top: 50%; margin: -21px 0 0 -21px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 15px rgba(0, 210, 255, 0.4);
-    cursor: pointer; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    cursor: pointer; transition: all 0.2s ease;
     border: 3px solid #ffffff;
   }
-  .marker-pin:hover { transform: rotate(-45deg) scale(1.15); z-index: 999 !important; }
+  .marker-pin:hover { transform: rotate(-45deg) scale(1.15); z-index: 1000 !important; }
   .marker-text {
-    position: absolute; z-index: 10; font-weight: 900; font-size: 14px;
+    position: absolute; z-index: 10; font-weight: 900; font-size: 15px;
     transform: rotate(45deg); color: #0f172a; text-shadow: 0 0 2px white;
   }
-  .marker-pin.small { width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 2px solid #ffffff; }
-  .marker-pin.small .marker-text { font-size: 11px; font-weight: 600; }
-  .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; }
+  /* 藍色 P 標誌專用樣式 */
+  .marker-pin.static-p {
+    background-color: #2563eb !important; /* 鮮艷藍 */
+    width: 36px; height: 36px; margin: -18px 0 0 -18px;
+  }
+  .marker-pin.static-p .marker-text {
+    color: white; text-shadow: none; font-size: 18px; font-weight: 800;
+  }
+  .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; opacity: 0.2; }
   .leaflet-popup-content-wrapper { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-radius: 24px; color: white; border: 1px solid rgba(56, 189, 248, 0.3); }
   
   .custom-user-marker { background: transparent; border: none; }
   .user-pulse {
-    background: #ff3333; width: 18px; height: 18px; border-radius: 50%;
+    background: #ff3333; width: 20px; height: 20px; border-radius: 50%;
     border: 3px solid white; box-shadow: 0 0 20px rgba(255, 51, 51, 0.8);
     animation: pulse 2s infinite;
   }
   @keyframes pulse {
     0% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.7); }
-    70% { box-shadow: 0 0 0 18px rgba(255, 51, 51, 0); }
+    70% { box-shadow: 0 0 0 20px rgba(255, 51, 51, 0); }
     100% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0); }
   }
 `;
 
-// ---------------------------------------------------------
-// 圓滾滾小企鵝 Logo (更加胖胖可愛版)
-// ---------------------------------------------------------
 const PenguinLogo = () => (
   <svg viewBox="0 0 100 100" className="w-12 h-12 drop-shadow-[0_0_8px_rgba(0,210,255,0.6)]">
     <defs>
@@ -85,7 +88,7 @@ const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fp
 const SEARCH_RADIUS_KM = 5; 
 
 export default function App() {
-  const [currentCity, setCurrentCity] = useState(TAIWAN_CITIES[13]); // 預設台南
+  const [currentCity, setCurrentCity] = useState(TAIWAN_CITIES[13]); 
   const [allParkingData, setAllParkingData] = useState([]);
   const [parkingData, setParkingData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -101,7 +104,6 @@ export default function App() {
 
   useEffect(() => { document.title = "小企鵝停車雷達"; }, []);
 
-  // 輔助函式：計算距離
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
     if (!lat1 || !lon1 || !lat2 || !lon2) return null;
     const R = 6371;
@@ -111,7 +113,6 @@ export default function App() {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   };
 
-  // 輔助函式：判斷最近縣市
   const findNearestCity = (lat, lng) => {
     let minD = Infinity; let nearest = TAIWAN_CITIES[13];
     TAIWAN_CITIES.forEach(c => {
@@ -131,16 +132,13 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // 2. 啟動與自動化排程邏輯 (修復地圖空白關鍵：移除 return Early)
+  // 2. 自動更新排程 (20s 定位 / 60s 資料)
   useEffect(() => {
     if (!isLeafletLoaded) return;
 
-    // A. 導入時定位判定縣市
-    const runStartup = () => {
+    const startup = () => {
       if (!navigator.geolocation) {
-        setIsInitializing(false);
-        fetchParkingData(currentCity.code);
-        return;
+        setIsInitializing(false); fetchParkingData(currentCity.code); return;
       }
       navigator.geolocation.getCurrentPosition(
         (p) => {
@@ -150,43 +148,26 @@ export default function App() {
           setCurrentCity(city);
           fetchParkingData(city.code);
           setIsInitializing(false);
+          if (mapInstanceRef.current) mapInstanceRef.current.setView([loc.lat, loc.lng], 13);
         },
-        () => {
-          setIsInitializing(false);
-          fetchParkingData(currentCity.code);
-        },
+        () => { setIsInitializing(false); fetchParkingData(currentCity.code); },
         { enableHighAccuracy: true, timeout: 8000 }
       );
     };
-    runStartup();
+    startup();
 
-    // B. 每 20 秒更新紅點定位
-    const locInterval = setInterval(() => {
+    const tLoc = setInterval(() => {
       navigator.geolocation.getCurrentPosition((p) => {
         setUserLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
       }, null, { enableHighAccuracy: true });
     }, 20000);
 
-    // C. 每 60 秒更新停車資料
-    const dataInterval = setInterval(() => {
-      fetchParkingData(currentCity.code, true);
-    }, 60000);
+    const tData = setInterval(() => { fetchParkingData(currentCity.code, true); }, 60000);
 
-    // D. 每 60 秒同步中心至 5km 範圍
-    const mapSyncInterval = setInterval(() => {
-      if (userLocation && mapInstanceRef.current) {
-        mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 13, { animate: true });
-      }
-    }, 60000);
-
-    return () => {
-      clearInterval(locInterval);
-      clearInterval(dataInterval);
-      clearInterval(mapSyncInterval);
-    };
+    return () => { clearInterval(tLoc); clearInterval(tData); };
   }, [isLeafletLoaded, currentCity.code]);
 
-  // 3. 地圖初始化邏輯 (關鍵修復：監聽 isInitializing)
+  // 3. 初始化地圖 (修復空白問題)
   useEffect(() => {
     if (isLeafletLoaded && !isInitializing && mapContainerRef.current && !mapInstanceRef.current) {
       const L = window.L;
@@ -194,24 +175,22 @@ export default function App() {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
       mapInstanceRef.current = map;
-      
-      // 強制修正地圖尺寸
-      setTimeout(() => map.invalidateSize(), 300);
+      setTimeout(() => map.invalidateSize(), 500);
     }
   }, [isLeafletLoaded, isInitializing]);
 
-  // 4. 資料處理與泡泡顯示 (確保不因 false is not iterable 崩潰)
+  // 4. 資料視覺化與藍色 P 標誌邏輯
   useEffect(() => {
     const dataArray = Array.isArray(allParkingData) ? allParkingData : [];
-    
     const processed = dataArray.map(lot => {
       const total = lot?.total && typeof lot.total !== 'object' ? Number(lot.total) : 0;
       const available = lot?.available && typeof lot.available !== 'object' ? Number(lot.available) : -1;
       const isUnknown = (available === -1 || isNaN(available));
-      const lat = Number(lot?.lat);
-      const lng = Number(lot?.lng);
+      const plat = Number(lot?.lat);
+      const plng = Number(lot?.lng);
+      const name = String(lot?.name || "未知");
       
-      let color = '#94a3b8'; // 預設灰色
+      let color = '#2563eb'; // 靜態藍色
       let percentage = total > 0 ? available / total : 1; 
 
       if (!isUnknown) {
@@ -224,14 +203,13 @@ export default function App() {
       }
 
       return { 
-        ...lot, lat, lng, total, available, color, isUnknown,
-        distance: userLocation ? calculateDistance(userLocation.lat, userLocation.lng, lat, lng) : null 
+        ...lot, name, lat: plat, lng: plng, total, available, color, isUnknown,
+        distance: userLocation ? calculateDistance(userLocation.lat, userLocation.lng, plat, plng) : null 
       };
     });
 
     const filtered = processed.filter(lot => lot.distance !== null && lot.distance <= SEARCH_RADIUS_KM).sort((a, b) => (a.distance || 0) - (b.distance || 0));
     setParkingData(filtered.length > 0 ? filtered : processed.slice(0, 100));
-    
   }, [allParkingData, userLocation]);
 
   // 5. 數據抓取
@@ -243,35 +221,40 @@ export default function App() {
       url.searchParams.append('city', cityCode);
       const res = await fetch(url.toString());
       const result = await res.json();
-      if (result && result.success && Array.isArray(result.data)) {
-        setAllParkingData(result.data);
-      } else {
-        setAllParkingData([]);
-      }
-    } catch (e) {
-      setAllParkingData([]);
-    } finally { setLoading(false); }
+      if (result?.success && Array.isArray(result.data)) setAllParkingData(result.data);
+      else setAllParkingData([]);
+    } catch (e) { setAllParkingData([]); } 
+    finally { setLoading(false); }
   };
 
-  // 6. UI 事件
-  const handleCityChange = (e) => {
-    const selected = TAIWAN_CITIES.find(c => c.code === e.target.value);
-    if (!selected) return;
-    setCurrentCity(selected);
-    if (mapInstanceRef.current) mapInstanceRef.current.setView([selected.lat, selected.lng], 13, { animate: true });
-    fetchParkingData(selected.code);
-  };
-
+  // 6. 導航功能 (修復 window.open 問題)
   const handleNavigate = (lat, lng, name) => {
+    if (!lat || !lng) return;
     const utterance = new SpeechSynthesisUtterance(`小企鵝即刻為您導航至 ${String(name)}。`);
     utterance.lang = 'zh-TW';
     window.speechSynthesis.speak(utterance);
-    setTimeout(() => { window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank'); }, 1800);
+    
+    // 解決部分行動裝置瀏覽器對非直接觸發 window.open 的限制
+    const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    setTimeout(() => { window.location.href = mapUrl; }, 1500);
   };
 
-  useEffect(() => { window.handleNavigateGlobal = handleNavigate; return () => { delete window.handleNavigateGlobal; }; }, []);
+  useEffect(() => { 
+    window.handleNavigateGlobal = handleNavigate; 
+    return () => { delete window.handleNavigateGlobal; }; 
+  }, []);
 
-  // 7. 標記渲染同步
+  // 7. 點擊標記處理
+  const handleMarkerClick = (lot) => {
+    let speakText = `${lot.name}。`;
+    if (lot.isUnknown) speakText += `此為靜態場站，暫無即時數字。費率為：${lot.fare}。`;
+    else speakText += `目前剩餘 ${lot.available} 格。費率為：${lot.fare}。`;
+    const utterance = new SpeechSynthesisUtterance(speakText);
+    utterance.lang = 'zh-TW';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // 8. 標記渲染
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -281,20 +264,25 @@ export default function App() {
     currentMarkers.forEach((marker, id) => { if (!activeIds.has(String(id))) { map.removeLayer(marker); currentMarkers.delete(id); } });
 
     dataToRender.forEach(lot => {
+      const isStatic = lot.isUnknown;
       const iconSettings = { 
         className: 'custom-marker', 
-        html: `<div class="marker-pin ${lot.isUnknown ? 'small' : ''}" style="background-color: ${lot.color};"><span class="marker-text">${lot.isUnknown ? '?' : lot.available}</span></div>`, 
-        iconSize: lot.isUnknown ? [26, 26] : [42, 42], iconAnchor: lot.isUnknown ? [21, 42] : [21, 42], popupAnchor: [0, -42] 
+        html: `<div class="marker-pin ${isStatic ? 'static-p' : ''}" style="background-color: ${lot.color};"><span class="marker-text">${isStatic ? 'P' : lot.available}</span></div>`, 
+        iconSize: [42, 42], iconAnchor: [21, 42], popupAnchor: [0, -42] 
       };
 
       const popupHtml = `
-        <div style="min-width: 210px; padding: 10px; color: white;">
-          <b style="font-size:16px; color:#38bdf8;">${String(lot.name)}</b>
-          <div style="font-size:11px; margin: 5px 0; color: #94a3b8;">總位數: ${lot.total || '未知'} | 距離: ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km</div>
-          <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; border-left: 3px solid #38bdf8;">${String(lot.fare)}</div>
-          <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid #334155; padding-top:10px;">
-             <div><span style="font-size:22px; font-weight:900; color:${lot.color};">${lot.isUnknown ? '?' : lot.available}</span> <small>位</small></div>
-             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:6px 12px; border-radius:8px; font-weight:bold; cursor:pointer;">導航</button>
+        <div style="min-width: 220px; padding: 12px; color: white;">
+          <b style="font-size:16px; color:#38bdf8; display:block; margin-bottom:4px;">${lot.name}</b>
+          <div style="font-size:11px; color: #94a3b8; margin-bottom:8px;">
+            ${isStatic ? '📡 靜態位置資訊' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
+          </div>
+          <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px; border-left: 4px solid ${lot.color}; line-height:1.4;">
+            ${lot.fare}
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid rgba(255,255,255,0.1); padding-top:12px; margin-top:10px;">
+             <div><div style="font-size:10px; color:#64748b;">${isStatic ? '狀態' : '剩餘位子'}</div><div style="font-size:24px; font-weight:900; color:${lot.color}; line-height:1;">${isStatic ? 'P' : lot.available}</div></div>
+             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px;">導航 GO</button>
           </div>
         </div>
       `;
@@ -303,14 +291,14 @@ export default function App() {
         const marker = currentMarkers.get(String(lot.id));
         marker.setIcon(L.divIcon(iconSettings)).getPopup().setContent(popupHtml);
       } else {
-        const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) }).bindPopup(popupHtml).addTo(map);
+        const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) }).bindPopup(popupHtml).on('click', () => handleMarkerClick(lot)).addTo(map);
         currentMarkers.set(String(lot.id), marker);
       }
     });
 
     if (userLocation) {
       if (userMarkerRef.current) userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
-      else userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: L.divIcon({ className: 'custom-user-marker', html: `<div class="user-pulse"></div>`, iconSize: [18, 18] }), zIndexOffset: 1000 }).addTo(map);
+      else userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: L.divIcon({ className: 'custom-user-marker', html: `<div class="user-pulse"></div>`, iconSize: [20, 20] }), zIndexOffset: 1000 }).addTo(map);
     }
   }, [parkingData, userLocation]);
 
@@ -318,20 +306,15 @@ export default function App() {
     <div className="flex flex-col h-screen bg-slate-900 font-sans text-slate-100 relative overflow-hidden">
       <style>{leafletStyle}</style>
 
-      {/* 初始啟動全屏 Overlay */}
       {isInitializing && (
         <div className="absolute inset-0 z-[5000] bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
-          <div className="relative mb-10">
-            <PenguinLogo />
-            <div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div>
-          </div>
-          <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達啟動中</h1>
-          <p className="text-slate-500 text-sm animate-pulse">正在掃描衛星位置並載入縣市資料...</p>
+          <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
+          <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
+          <p className="text-slate-500 text-sm animate-pulse">正在鎖定衛星座標並同步縣市資訊...</p>
         </div>
       )}
 
-      {/* 標題與選單控制項 */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30">
+      <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30 shadow-lg">
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-3">
             <PenguinLogo />
@@ -339,18 +322,22 @@ export default function App() {
               <h1 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 leading-none">小企鵝停車雷達</h1>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">運動偵測模式</span>
+                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">動態偵測模式</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
-             <button onClick={() => fetchParkingData(currentCity.code)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
+             <button onClick={() => fetchParkingData(currentCity.code)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
           </div>
         </div>
-        
         <div className="flex gap-3 h-10">
           <div className="relative flex-1">
-            <select value={currentCity.code} onChange={handleCityChange} className="w-full h-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 text-xs font-bold text-white appearance-none focus:outline-none focus:border-sky-500">
+            <select value={currentCity.code} onChange={(e) => {
+              const selected = TAIWAN_CITIES.find(c => c.code === e.target.value);
+              setCurrentCity(selected);
+              if (mapInstanceRef.current) mapInstanceRef.current.setView([selected.lat, selected.lng], 13, { animate: true });
+              fetchParkingData(selected.code);
+            }} className="w-full h-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 text-xs font-bold text-white appearance-none focus:outline-none focus:border-sky-500">
               {TAIWAN_CITIES.map(c => <option key={c.code} value={c.code} className="text-slate-900">{String(c.name)}</option>)}
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-sky-500 pointer-events-none" size={14} />
@@ -361,14 +348,14 @@ export default function App() {
           </div>
         </div>
         <div className="mt-2 text-[9px] text-slate-400 flex items-center gap-1 opacity-80">
-          <Zap size={10} className="text-sky-400" /> 標註 * 號之縣市提供即時車位查詢
+          <Zap size={10} className="text-sky-400" /> <span className="text-blue-400 font-bold">藍色 P</span> 為靜態場站，彩色數字為即時車位
         </div>
       </div>
       
       <div className="flex-1 relative bg-slate-900">
-        <div className={`absolute inset-0 ${viewMode === 'map' ? 'z-10' : 'z-0 opacity-0 pointer-events-none'}`}>
+        <div id="map-wrap" className={`absolute inset-0 ${viewMode === 'map' ? 'z-10' : 'z-0 opacity-0 pointer-events-none'}`}>
            <div ref={mapContainerRef} className="w-full h-full" />
-           {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl animate-bounce">掃描中...</div>}
+           {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl">更新資料中...</div>}
         </div>
         <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-48 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
            <div className="space-y-3">
@@ -380,12 +367,12 @@ export default function App() {
                         <span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-mono">#{String(lot.id).slice(-4)}</span>
                         {lot.distance && <span className="text-[10px] font-black text-indigo-400">📡 {Number(lot.distance).toFixed(1)} km</span>}
                       </div>
-                      <h3 className="font-black text-slate-100 text-base">{String(lot.name)}</h3>
-                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{lot.address}</p>
+                      <h3 className="font-black text-slate-100 text-base leading-tight">${lot.name}</h3>
+                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">${lot.address}</p>
                     </div>
-                    <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${Number(lot.available) < 10 && !lot.isUnknown ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500'}`}>
-                      <span className="text-xl font-black" style={{ color: lot.color }}>{lot.isUnknown ? '?' : Number(lot.available)}</span>
-                      <span className="text-[8px] font-bold uppercase">Seats</span>
+                    <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${lot.isUnknown ? 'border-blue-500 text-blue-500' : (Number(lot.available) < 10 ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500')}`}>
+                      <span className="text-xl font-black">${lot.isUnknown ? 'P' : lot.available}</span>
+                      <span className="text-[8px] font-bold uppercase tracking-tighter">${lot.isUnknown ? 'Static' : 'Seats'}</span>
                     </div>
                  </div>
                </div>
