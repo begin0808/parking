@@ -52,8 +52,6 @@ const leafletStyle = `
   .leaflet-popup-content-wrapper { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
   
   .custom-user-marker { background: transparent; border: none; }
-  
-  /* 更新：定位點使用醒目紅色與霓虹紅波紋 */
   .user-pulse {
     background: #ff3333; width: 18px; height: 18px; border-radius: 50%;
     border: 3px solid white;
@@ -67,7 +65,6 @@ const leafletStyle = `
   }
   .leaflet-bottom.leaflet-right { bottom: 30px; right: 20px; z-index: 500; }
 
-  /* 針對定位按鈕的實心醒目樣式 */
   .btn-locate-glow {
     background: #ff3333 !important;
     color: white !important;
@@ -124,7 +121,7 @@ const penguinSpeak = (text) => {
 // -----------------------------------------------------------------------------
 // [重要] API 網址設定
 // -----------------------------------------------------------------------------
-const API_BASE = ''; // <-- 填入您的 GAS 網址 (/exec)
+const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fpp-PaPvo4bOk95Wi9Gh8TV-bH35gukiFG0xfHlEQqOX8hQ/exec'; // <-- 填入您的 GAS 網址 (/exec)
 
 const SEARCH_RADIUS_KM = 3; 
 const AUTO_REFRESH_INTERVAL = 60000; 
@@ -136,7 +133,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState('map');
-  const [dataSource, setDataSource] = useState('雷達掃描中...');
+  const [dataSource, setDataSource] = useState('雷達啟動中...');
   const [userLocation, setUserLocation] = useState(null);
   const [showInstructions, setShowInstructions] = useState(false);
   
@@ -181,9 +178,19 @@ export default function App() {
       (p) => {
         const loc = { lat: p.coords.latitude, lng: p.coords.longitude };
         setUserLocation(loc);
-        setCurrentCity(findNearestCity(loc.lat, loc.lng));
+        const city = findNearestCity(loc.lat, loc.lng);
+        setCurrentCity(city);
+        // 定位成功後，立刻讓地圖移動到該點
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([loc.lat, loc.lng], 14, { animate: true });
+        }
       },
-      null, { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        console.warn("定位失敗，使用預設城市", err.message);
+        // 若定位失敗，觸發一次預設抓取
+        fetchParkingData(currentCity.code);
+      }, 
+      { enableHighAccuracy: true, timeout: 10000 }
     );
 
     // 持續追蹤
@@ -197,7 +204,7 @@ export default function App() {
       null, { enableHighAccuracy: true }
     );
     return () => navigator.geolocation.clearWatch(id);
-  }, [currentCity.code]);
+  }, [isLeafletLoaded]);
 
   // 3. 初始化地圖
   useEffect(() => {
@@ -207,6 +214,7 @@ export default function App() {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
       mapInstanceRef.current = map;
+      // 初始抓取一次 (若定位還沒回來，先抓預設縣市)
       fetchParkingData(currentCity.code);
     }
   }, [isLeafletLoaded]);
@@ -231,20 +239,28 @@ export default function App() {
     }
   }, [userLocation]);
 
-  // 6. 核心篩選與排序
+  // 6. 核心篩選與排序：這決定了泡泡是否出現
   useEffect(() => {
     if (allParkingData.length === 0) return;
     if (userLocation) {
-      const filtered = allParkingData.map(lot => ({ ...lot, distance: calculateDistance(userLocation.lat, userLocation.lng, lot.lat, lot.lng) }))
-        .filter(lot => lot.distance <= SEARCH_RADIUS_KM).sort((a, b) => a.distance - b.distance);
+      const filtered = allParkingData.map(lot => ({ 
+          ...lot, 
+          distance: calculateDistance(userLocation.lat, userLocation.lng, lot.lat, lot.lng) 
+        }))
+        .filter(lot => lot.distance <= SEARCH_RADIUS_KM) // 只留 3 公里內
+        .sort((a, b) => a.distance - b.distance);
+      
+      console.log(`篩選完成：方圓 ${SEARCH_RADIUS_KM}km 內共有 ${filtered.length} 個停車場`);
       setParkingData(filtered);
-    } else setParkingData([...allParkingData].sort((a, b) => b.available - a.available));
+    } else {
+      // 沒定位時顯示全縣市
+      setParkingData([...allParkingData].sort((a, b) => b.available - a.available));
+    }
   }, [userLocation, allParkingData]);
 
-  // 7. 切換城市 API
+  // 7. 城市變動時抓取資料
   useEffect(() => {
-    if (mapInstanceRef.current && window.L) {
-      if (userLocation) mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 14, { animate: true });
+    if (mapInstanceRef.current && isLeafletLoaded) {
       fetchParkingData(currentCity.code);
     }
   }, [currentCity.code]);
@@ -256,9 +272,33 @@ export default function App() {
       if (!API_BASE) throw new Error('API_MISSING');
       const url = new URL(API_BASE); url.searchParams.append('route', 'parking'); url.searchParams.append('city', cityCode);
       const res = await fetch(url.toString()); const result = await res.json();
-      if (result.success) { setDataSource(`連線成功`); setAllParkingData(result.data.map(d => ({ ...d, type: 'parking' }))); }
+      if (result.success) {
+        setDataSource(`連線成功`);
+        setAllParkingData(result.data.map(d => ({ ...d, type: 'parking' })));
+      } else {
+        throw new Error(result.message);
+      }
     } catch (e) {
-      if (!isBackground) setDataSource('模擬模式');
+      console.warn("API 抓取異常，切換至測試模式", e.message);
+      if (!isBackground) {
+        setDataSource('測試模式 (模擬數據)');
+        // 為了確保在測試環境看到泡泡，我們生成以使用者位置為中心隨機分佈的數據
+        const centerLat = userLocation ? userLocation.lat : currentCity.lat;
+        const centerLng = userLocation ? userLocation.lng : currentCity.lng;
+        
+        const mock = Array.from({ length: 25 }).map((_, i) => ({
+          id: `p-${i}`, 
+          name: `企鵝冰山停放區 ${i+1}`,
+          address: `南極洲掃描座標區`, 
+          fare: '魚 3 條 / 小時',
+          // 在中心點附近 0.02 經緯度範圍內隨機 (約 2 公里內)
+          lat: centerLat + (Math.random() - 0.5) * 0.04, 
+          lng: centerLng + (Math.random() - 0.5) * 0.04,
+          total: 100, 
+          available: Math.floor(Math.random() * 80),
+        }));
+        setAllParkingData(mock);
+      }
     } finally { setLoading(false); setIsAutoRefreshing(false); }
   };
 
@@ -270,7 +310,7 @@ export default function App() {
       (p) => {
         const loc = { lat: p.coords.latitude, lng: p.coords.longitude };
         setUserLocation(loc);
-        if (mapInstanceRef.current) mapInstanceRef.current.setView([loc.lat, loc.lng], 14, { animate: true });
+        if (mapInstanceRef.current) mapInstanceRef.current.setView([loc.lat, loc.lng], 15, { animate: true });
         setLoading(false);
         penguinSpeak("已重新鎖定雷達座標。");
       },
@@ -303,22 +343,40 @@ export default function App() {
     }
   };
 
-  // 10. 標記同步
+  // 10. 標記同步：將 parkingData 繪製到地圖
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
+    
+    // 清除不在 parkingData 裡的舊標記
     const activeIds = new Set(parkingData.map(l => l.id.toString()));
-    currentMarkers.forEach((marker, id) => { if (!activeIds.has(id.toString())) { map.removeLayer(marker); currentMarkers.delete(id); } });
+    currentMarkers.forEach((marker, id) => { 
+      if (!activeIds.has(id.toString())) { 
+        map.removeLayer(marker); 
+        currentMarkers.delete(id); 
+      } 
+    });
 
+    // 新增或更新標記
     parkingData.forEach(lot => {
-      const isUnknown = lot.available === -1; const percentage = lot.total > 0 ? lot.available / lot.total : 0;
+      const isUnknown = lot.available === -1; 
+      const percentage = lot.total > 0 ? lot.available / lot.total : 0;
       let color = '#94a3b8'; let isSmall = isUnknown;
+      
       if (!isUnknown) {
         if (lot.total === 0 || percentage < 0.1 || lot.available === 0) color = '#f43f5e';
         else if (percentage < 0.3) color = '#f59e0b';
         else color = '#10b981';
       }
-      const iconSettings = { className: 'custom-marker', html: `<div class="marker-pin ${isSmall ? 'small' : ''}" style="background-color: ${color};"><span class="marker-text">${isSmall ? '?' : lot.available}</span></div>`, iconSize: isSmall ? [26, 26] : [42, 42], iconAnchor: isSmall ? [13, 13] : [21, 42], popupAnchor: isSmall ? [0, -13] : [0, -42] };
+
+      const iconSettings = { 
+        className: 'custom-marker', 
+        html: `<div class="marker-pin ${isSmall ? 'small' : ''}" style="background-color: ${color};"><span class="marker-text">${isSmall ? '?' : lot.available}</span></div>`, 
+        iconSize: isSmall ? [26, 26] : [42, 42], 
+        iconAnchor: isSmall ? [13, 13] : [21, 42], 
+        popupAnchor: isSmall ? [0, -13] : [0, -42] 
+      };
+
       const popupHtml = `
         <div style="min-width: 210px; text-align: left; padding: 5px;">
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;"><div style="background:#0ea5e9; padding:4px; border-radius:8px;">🐧</div><b style="font-size:16px; color:#0f172a;">${lot.name}</b></div>
@@ -330,8 +388,18 @@ export default function App() {
           </div>
         </div>
       `;
-      if (currentMarkers.has(lot.id.toString())) { const marker = currentMarkers.get(lot.id.toString()); marker.setIcon(L.divIcon(iconSettings)); marker.getPopup().setContent(popupHtml); }
-      else { const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) }).bindPopup(popupHtml).on('click', () => handleSelectLot(lot)).addTo(map); currentMarkers.set(lot.id.toString(), marker); }
+
+      if (currentMarkers.has(lot.id.toString())) {
+        const marker = currentMarkers.get(lot.id.toString());
+        marker.setIcon(L.divIcon(iconSettings));
+        marker.getPopup().setContent(popupHtml);
+      } else {
+        const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) })
+          .bindPopup(popupHtml)
+          .on('click', () => handleSelectLot(lot))
+          .addTo(map);
+        currentMarkers.set(lot.id.toString(), marker);
+      }
     });
   }, [parkingData]);
 
@@ -352,15 +420,14 @@ export default function App() {
               </div>
             </div>
           </div>
-          {/* 按鈕組：定位、更新、說明 (說明在最右邊) */}
           <div className="flex gap-2">
-             <button onClick={handleLocateMeAction} className={`p-2.5 rounded-xl border transition-all ${userLocation ? 'btn-locate-glow' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+             <button onClick={handleLocateMeAction} title="重新鎖定位置" className={`p-2.5 rounded-xl border transition-all ${userLocation ? 'btn-locate-glow' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
                <LocateFixed size={20} />
              </button>
-             <button onClick={() => fetchParkingData(currentCity.code)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 transition-all active:bg-slate-700">
+             <button onClick={() => fetchParkingData(currentCity.code)} title="手動更新數據" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 transition-all active:bg-slate-700">
                <RotateCw size={20} className={loading ? 'animate-spin' : ''} />
              </button>
-             <button onClick={() => setShowInstructions(true)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 transition-all hover:bg-slate-700 active:scale-95">
+             <button onClick={() => setShowInstructions(true)} title="操作說明" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 transition-all hover:bg-slate-700 active:scale-95">
                <Info size={20} />
              </button>
           </div>
@@ -395,6 +462,12 @@ export default function App() {
                  <button onClick={(e) => { e.stopPropagation(); handleNavigate(lot.lat, lot.lng, lot.name); }} className="w-full mt-4 bg-sky-500 hover:bg-sky-400 text-slate-900 py-3 rounded-2xl text-sm font-black flex justify-center items-center gap-2 transition-all"><Navigation size={18} fill="currentColor" /> 即刻導航</button>
                </div>
              ))}
+             {parkingData.length === 0 && (
+               <div className="text-center py-20 text-slate-500">
+                 <p className="font-mono">雷達半徑 3km 內未偵測到場站</p>
+                 <button onClick={() => fetchParkingData(currentCity.code)} className="mt-4 text-sky-400 underline">重新掃描全縣市</button>
+               </div>
+             )}
            </div>
         </div>
       </div>
@@ -412,22 +485,16 @@ export default function App() {
                   <div className="text-2xl">📱</div>
                   <div>
                     <p className="font-bold text-sky-400 mb-1">最佳運作環境</p>
-                    <p className="text-xs leading-relaxed">
-                      為確保精準度，建議使用<span className="text-white font-bold">手機</span>開啟、連線 <span className="text-white font-bold">4G/5G</span> 行動網路，並務必點選「<span className="text-white font-bold">允許存取位置</span>」。
-                    </p>
+                    <p className="text-xs leading-relaxed">為確保精準度，建議使用手機開啟、連線 4G/5G 網路，並務必點選「允許存取位置」。</p>
                   </div>
                 </div>
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
-                  <div className="text-2xl">🐧</div>
-                  <div><p className="font-bold text-sky-400 mb-1">智慧語音助教</p><p>點擊停車場小企鵝會為您播報距離與費率。按下導航時也會有語音確認。</p></div>
-                </div>
-                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
                   <div className="text-2xl">📍</div>
-                  <div><p className="font-bold text-red-500 mb-1">紅色定位按鈕</p><p>代表您的位置。若視野偏移，可點擊右上方 <span className="text-red-500">紅色實心按鈕</span> 重新鎖定雷達座標。</p></div>
+                  <div><p className="font-bold text-red-500 mb-1">紅色定位按鈕</p><p>若視野偏移，點擊右上方紅色實心按鈕可重新鎖定。地圖紅點代表您的即時座標。</p></div>
                 </div>
                 <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
                   <div className="text-2xl">📡</div>
-                  <div><p className="font-bold text-sky-400 mb-1">掃描半徑</p><p>自動過濾並顯示方圓 3 公里內的即時空位，駕駛中會每 60 秒自動更新數據。</p></div>
+                  <div><p className="font-bold text-sky-400 mb-1">掃描半徑</p><p>自動偵測方圓 3 公里內的空位。若該區無資料，請移動位置或手動重新整理。</p></div>
                 </div>
               </div>
               <button onClick={() => setShowInstructions(false)} className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">啟動掃描</button>
