@@ -52,8 +52,6 @@ const leafletStyle = `
   .leaflet-popup-content-wrapper { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
   
   .custom-user-marker { background: transparent; border: none; }
-  
-  /* 更新：定位點改為紅色 (#ff4d4d) 與霓虹紅波紋 */
   .user-pulse {
     background: #ff4d4d; width: 18px; height: 18px; border-radius: 50%;
     border: 3px solid white;
@@ -102,6 +100,19 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
+// ---------------------------------------------------------
+// 核心語音播報功能
+// ---------------------------------------------------------
+const penguinSpeak = (text) => {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel(); // 先停止當前播報，避免堆疊
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'zh-TW';
+  utterance.rate = 1.0;
+  utterance.pitch = 1.2; // 讓企鵝的聲音輕快一點
+  window.speechSynthesis.speak(utterance);
+};
+
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fpp-PaPvo4bOk95Wi9Gh8TV-bH35gukiFG0xfHlEQqOX8hQ/exec'; // <-- 請填入您的 GAS 網址
 
 const SEARCH_RADIUS_KM = 3; 
@@ -114,7 +125,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState('map');
-  const [dataSource, setDataSource] = useState('雷達掃描中...');
+  const [dataSource, setDataSource] = useState('雷達啟動中...');
   const [userLocation, setUserLocation] = useState(null);
   const [showInstructions, setShowInstructions] = useState(false);
   
@@ -124,12 +135,9 @@ export default function App() {
   const markersRef = useRef(new Map()); 
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
 
-  // 更新：設定網頁頁籤名稱
-  useEffect(() => {
-    document.title = "小企鵝停車雷達";
-  }, []);
+  useEffect(() => { document.title = "小企鵝停車雷達"; }, []);
 
-  // 1. 載入引擎
+  // 1. 載入 Leaflet 引擎
   useEffect(() => {
     if (window.L && window.L.map) { setIsLeafletLoaded(true); return; }
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -183,21 +191,24 @@ export default function App() {
     }
   }, [isLeafletLoaded]);
 
-  // 4. 定時自動更新
+  // 4. 自動定時更新
   useEffect(() => {
     const timer = setInterval(() => { if (currentCity) fetchParkingData(currentCity.code, true); }, AUTO_REFRESH_INTERVAL);
     return () => clearInterval(timer);
   }, [currentCity]);
 
-  // 5. 使用者定位點更新 (紅色波紋)
+  // 5. 更新定位紅點
   useEffect(() => {
     if (!userLocation || !mapInstanceRef.current || !window.L) return;
     const L = window.L;
-    if (userMarkerRef.current) userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
-    else userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: L.divIcon({ className: 'custom-user-marker', html: `<div class="user-pulse"></div>`, iconSize: [18, 18] }), zIndexOffset: 1000 }).bindPopup("雷達所在點").addTo(mapInstanceRef.current);
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+    } else {
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: L.divIcon({ className: 'custom-user-marker', html: `<div class="user-pulse"></div>`, iconSize: [18, 18] }), zIndexOffset: 1000 }).bindPopup("雷達所在點").addTo(mapInstanceRef.current);
+    }
   }, [userLocation]);
 
-  // 6. 篩選
+  // 6. 核心篩選 3KM
   useEffect(() => {
     if (allParkingData.length === 0) return;
     if (userLocation) {
@@ -207,7 +218,7 @@ export default function App() {
     } else setParkingData([...allParkingData].sort((a, b) => b.available - a.available));
   }, [userLocation, allParkingData]);
 
-  // 7. 切換城市
+  // 7. 切換城市 API
   useEffect(() => {
     if (mapInstanceRef.current && window.L) {
       if (userLocation) mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 14);
@@ -215,29 +226,48 @@ export default function App() {
     }
   }, [currentCity.code]);
 
-  // 8. 抓取資料
+  // 8. 數據抓取
   const fetchParkingData = async (cityCode, isBackground = false) => {
     if (isBackground) setIsAutoRefreshing(true); else { setLoading(true); setDataSource('發射雷達波...'); }
     try {
       if (!API_BASE) throw new Error('API_MISSING');
       const url = new URL(API_BASE); url.searchParams.append('route', 'parking'); url.searchParams.append('city', cityCode);
       const res = await fetch(url.toString()); const result = await res.json();
-      if (result.success) { setDataSource(`連線成功`); setAllParkingData(result.data.map(d => ({ ...d, type: 'parking' }))); }
+      if (result.success) {
+        setDataSource(`連線成功`);
+        setAllParkingData(result.data.map(d => ({ ...d, type: 'parking' })));
+      }
     } catch (e) {
-      if (!isBackground) setDataSource('模擬模式');
+      if (!isBackground) setDataSource('測試模式');
     } finally { setLoading(false); setIsAutoRefreshing(false); }
   };
 
+  // 9. 導航函式 (含語音)
   const handleNavigate = (lat, lng, name) => {
-    if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(`小企鵝正在為您導航至 ${name}`); utterance.lang = 'zh-TW'; window.speechSynthesis.speak(utterance); }
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+    penguinSpeak(`小企鵝即刻為您導航至 ${name}。`);
+    setTimeout(() => {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+    }, 1500); // 延遲一下讓語音講完
   };
 
   useEffect(() => { window.handleNavigateGlobal = handleNavigate; return () => { delete window.handleNavigateGlobal; }; }, []);
 
-  const handleListItemClick = (lot) => { setViewMode('map'); if (mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16, { animate: true }); };
+  // 選擇停車場 (點擊地圖標記或推薦項)
+  const handleSelectLot = (lot) => {
+    const distText = lot.distance ? `距離約 ${lot.distance.toFixed(1)} 公里。` : '';
+    const fareText = lot.fare && lot.fare !== '無資訊' ? `費率為：${lot.fare}。` : '費率詳洽現場。';
+    penguinSpeak(`${lot.name}。${distText}${fareText}`);
+    
+    setViewMode('map');
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([lot.lat, lot.lng], 16, { animate: true });
+      // 如果在地圖模式，開啟對應的標記彈窗
+      const marker = markersRef.current.get(lot.id.toString());
+      if (marker) marker.openPopup();
+    }
+  };
 
-  // 10. 標記同步
+  // 10. 繪製標記並綁定點擊事件
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -245,10 +275,20 @@ export default function App() {
     currentMarkers.forEach((marker, id) => { if (!activeIds.has(id.toString())) { map.removeLayer(marker); currentMarkers.delete(id); } });
 
     parkingData.forEach(lot => {
-      const isUnknown = lot.available === -1; const percentage = lot.total > 0 ? lot.available / lot.total : 0;
+      const isUnknown = lot.available === -1;
+      const percentage = lot.total > 0 ? lot.available / lot.total : 0;
       let color = '#94a3b8'; let isSmall = isUnknown;
-      if (!isUnknown) { if (lot.total === 0 || percentage < 0.1 || lot.available === 0) color = '#f43f5e'; else if (percentage < 0.3) color = '#f59e0b'; else color = '#10b981'; }
-      const iconSettings = { className: 'custom-marker', html: `<div class="marker-pin ${isSmall ? 'small' : ''}" style="background-color: ${color};"><span class="marker-text">${isSmall ? '?' : lot.available}</span></div>`, iconSize: isSmall ? [26, 26] : [42, 42], iconAnchor: isSmall ? [13, 13] : [21, 42], popupAnchor: isSmall ? [0, -13] : [0, -42] };
+      if (!isUnknown) {
+        if (lot.total === 0 || percentage < 0.1 || lot.available === 0) color = '#f43f5e';
+        else if (percentage < 0.3) color = '#f59e0b';
+        else color = '#10b981';
+      }
+      const iconSettings = {
+        className: 'custom-marker',
+        html: `<div class="marker-pin ${isSmall ? 'small' : ''}" style="background-color: ${color};"><span class="marker-text">${isSmall ? '?' : lot.available}</span></div>`,
+        iconSize: isSmall ? [26, 26] : [42, 42], iconAnchor: isSmall ? [13, 13] : [21, 42], popupAnchor: isSmall ? [0, -13] : [0, -42]
+      };
+      
       const popupHtml = `
         <div style="min-width: 210px; text-align: left; padding: 5px;">
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;"><div style="background:#0ea5e9; padding:4px; border-radius:8px;">🐧</div><b style="font-size:16px; color:#0f172a;">${lot.name}</b></div>
@@ -260,8 +300,18 @@ export default function App() {
           </div>
         </div>
       `;
-      if (currentMarkers.has(lot.id.toString())) { const marker = currentMarkers.get(lot.id.toString()); marker.setIcon(L.divIcon(iconSettings)); marker.getPopup().setContent(popupHtml); }
-      else { const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) }).bindPopup(popupHtml).addTo(map); currentMarkers.set(lot.id.toString(), marker); }
+
+      if (currentMarkers.has(lot.id.toString())) {
+        const marker = currentMarkers.get(lot.id.toString());
+        marker.setIcon(L.divIcon(iconSettings));
+        marker.getPopup().setContent(popupHtml);
+      } else {
+        const marker = L.marker([lot.lat, lot.lng], { icon: L.divIcon(iconSettings) })
+          .bindPopup(popupHtml)
+          .on('click', () => handleSelectLot(lot))
+          .addTo(map);
+        currentMarkers.set(lot.id.toString(), marker);
+      }
     });
   }, [parkingData]);
 
@@ -291,13 +341,12 @@ export default function App() {
         <div className="flex gap-3 h-11">
           <div className="flex-1 flex items-center px-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-sm font-bold text-sky-400"><Zap size={14} className="mr-2" /> 自動偵測模式已開啟</div>
           <div className="bg-slate-800/50 p-1 rounded-2xl flex border border-slate-700">
-            <button onClick={() => setViewMode('map')} className={`px-5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${viewMode === 'map' ? 'bg-sky-500 text-white' : 'text-slate-400'}`}><MapIcon size={14} /> 雷達</button>
-            <button onClick={() => setViewMode('list')} className={`px-5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${viewMode === 'list' ? 'bg-sky-500 text-white' : 'text-slate-400'}`}><List size={14} /> 推薦</button>
+            <button onClick={() => setViewMode('map')} className={`px-5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${viewMode === 'map' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}><MapIcon size={14} /> 雷達</button>
+            <button onClick={() => setViewMode('list')} className={`px-5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${viewMode === 'list' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}><List size={14} /> 推薦</button>
           </div>
         </div>
       </div>
       
-      {/* 內容區域 */}
       <div className="flex-1 relative bg-slate-900">
         <div className={`absolute inset-0 ${viewMode === 'map' ? 'z-10' : 'z-0 opacity-0 pointer-events-none'}`}>
            <div ref={mapContainerRef} className="w-full h-full" />
@@ -306,14 +355,14 @@ export default function App() {
         <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-48 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full z-20'}`}>
            <div className="space-y-4">
              {parkingData.map(lot => (
-               <div key={lot.id} onClick={() => handleListItemClick(lot)} className="bg-slate-800/60 backdrop-blur-md p-5 rounded-3xl border border-slate-700 hover:border-sky-500/50 transition-all active:scale-95 group">
+               <div key={lot.id} onClick={() => handleSelectLot(lot)} className="bg-slate-800/60 backdrop-blur-md p-5 rounded-3xl border border-slate-700 hover:border-sky-500/50 transition-all active:scale-95 group">
                  <div className="flex justify-between items-start">
                     <div className="flex-1 mr-3">
-                      <div className="flex items-center gap-2 mb-1"><span className="text-xs font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md">#{lot.id.toString().slice(-4)}</span>{lot.distance && <span className="text-xs font-black text-indigo-400">📡 {lot.distance.toFixed(1) || '0.0'} KM</span>}</div>
+                      <div className="flex items-center gap-2 mb-1"><span className="text-xs font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md">#{lot.id.toString().slice(-4)}</span>{lot.distance && <span className="text-xs font-black text-indigo-400">📡 {lot.distance.toFixed(1)} KM</span>}</div>
                       <h3 className="font-black text-slate-100 text-lg group-hover:text-sky-400 transition-colors">{lot.name}</h3>
                       <p className="text-xs text-slate-400 mt-2 line-clamp-1 flex items-center gap-1"><MapPin size={10} /> {lot.address || '位置未知'}</p>
                     </div>
-                    <div className={`flex flex-col items-center justify-center min-w-[70px] h-[70px] rounded-2xl border-2 ${lot.available < 10 ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500'}`}><span className="text-2xl font-black">{lot.available === -1 ? '?' : lot.available}</span><span className="text-[10px] font-bold uppercase tracking-tighter">Seats</span></div>
+                    <div className={`flex flex-col items-center justify-center min-w-[70px] h-[70px] rounded-2xl border-2 ${lot.available < 10 ? 'border-rose-500 text-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.3)]' : 'border-emerald-500 text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]'}`}><span className="text-2xl font-black">{lot.available === -1 ? '?' : lot.available}</span><span className="text-[10px] font-bold uppercase tracking-tighter">Seats</span></div>
                  </div>
                  <button onClick={(e) => { e.stopPropagation(); handleNavigate(lot.lat, lot.lng, lot.name); }} className="w-full mt-4 bg-sky-500 hover:bg-sky-400 text-slate-900 py-3 rounded-2xl text-sm font-black flex justify-center items-center gap-2 transition-all"><Navigation size={18} fill="currentColor" /> 即刻導航</button>
                </div>
@@ -322,31 +371,18 @@ export default function App() {
         </div>
       </div>
 
-      {/* 操作說明彈窗 */}
       {showInstructions && (
         <div className="absolute inset-0 z-[2000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md">
           <div className="bg-slate-800 border border-sky-500/50 rounded-[32px] w-full max-w-md overflow-hidden shadow-[0_0_40px_rgba(14,165,233,0.3)]">
             <div className="p-6 space-y-6">
               <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                   <div className="bg-sky-500/20 p-2 rounded-xl"><Info className="text-sky-400" size={24} /></div>
-                   <h2 className="text-xl font-black text-white">雷達操作手冊</h2>
-                </div>
+                <div className="flex items-center gap-3"><div className="bg-sky-500/20 p-2 rounded-xl"><Info className="text-sky-400" size={24} /></div><h2 className="text-xl font-black text-white">雷達操作手冊</h2></div>
                 <button onClick={() => setShowInstructions(false)} className="p-2 text-slate-400 hover:text-white"><X size={24} /></button>
               </div>
               <div className="space-y-4 text-sm text-slate-300">
-                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
-                  <div className="text-2xl">🐧</div>
-                  <div><p className="font-bold text-sky-400 mb-1">智慧定位</p><p>雷達會標示為 <span className="text-red-500 font-bold">紅色</span> 點。系統自動鎖定您的位置，掃描方圓 3 公里內的即時空位。</p></div>
-                </div>
-                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
-                  <div className="text-2xl">⚡</div>
-                  <div><p className="font-bold text-sky-400 mb-1">自動更新</p><p>每 60 秒發射一次雷達波，獲取最新數據，無需手動重新整理。</p></div>
-                </div>
-                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700">
-                  <div className="text-2xl">⭐</div>
-                  <div><p className="font-bold text-sky-400 mb-1">推薦功能</p><p>切換至「推薦」分頁，可依距離遠近查看精選的停車區塊。</p></div>
-                </div>
+                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700"><div className="text-2xl">🐧</div><div><p className="font-bold text-sky-400 mb-1">智慧語音</p><p>點擊停車場小企鵝會為您播報距離與費率。按下導航時也會發出語音確認。</p></div></div>
+                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700"><div className="text-2xl">⚡</div><div><p className="font-bold text-sky-400 mb-1">自動更新</p><p>每 60 秒發射一次雷達波，獲取最新數據，無需手動重新整理。</p></div></div>
+                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-2xl border border-slate-700"><div className="text-2xl">⭐</div><div><p className="font-bold text-sky-400 mb-1">推薦功能</p><p>切換至「推薦」分頁，可依距離遠近查看精選的停車區塊。</p></div></div>
               </div>
               <button onClick={() => setShowInstructions(false)} className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">啟動掃描</button>
             </div>
