@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X } from 'lucide-react';
 
 // ---------------------------------------------------------
-// 縣市資料定義
+// 縣市資料定義 (依北而南, 西而東排列)
 // ---------------------------------------------------------
 const TAIWAN_CITIES = [
   { code: 'Keelung', name: '基隆市 *', lat: 25.1276, lng: 121.7392, hasDynamic: true },
@@ -45,16 +45,17 @@ const leafletStyle = `
     position: absolute; z-index: 10; font-weight: 900; font-size: 15px;
     transform: rotate(45deg); color: #0f172a; text-shadow: 0 0 2px white;
   }
-  /* 藍色 P 標誌專用樣式 */
+  /* 藍色 P 泡泡專用樣式 - 維持與一般泡泡一致的形狀 */
   .marker-pin.static-p {
-    background-color: #2563eb !important; /* 鮮艷藍 */
-    width: 36px; height: 36px; margin: -18px 0 0 -18px;
+    background-color: #2563eb !important;
   }
   .marker-pin.static-p .marker-text {
-    color: white; text-shadow: none; font-size: 18px; font-weight: 800;
+    color: white; text-shadow: none; font-size: 20px; font-weight: 800;
   }
   .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; opacity: 0.2; }
+  
   .leaflet-popup-content-wrapper { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-radius: 24px; color: white; border: 1px solid rgba(56, 189, 248, 0.3); }
+  .leaflet-popup-tip { background: rgba(15, 23, 42, 0.95); }
   
   .custom-user-marker { background: transparent; border: none; }
   .user-pulse {
@@ -69,6 +70,9 @@ const leafletStyle = `
   }
 `;
 
+// ---------------------------------------------------------
+// 圓滾滾可愛企鵝 Logo
+// ---------------------------------------------------------
 const PenguinLogo = () => (
   <svg viewBox="0 0 100 100" className="w-12 h-12 drop-shadow-[0_0_8px_rgba(0,210,255,0.6)]">
     <defs>
@@ -132,7 +136,7 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // 2. 自動更新排程 (20s 定位 / 60s 資料)
+  // 2. 自動化排程邏輯 (20s 定位 / 60s 資料刷新 / 取消視野同步)
   useEffect(() => {
     if (!isLeafletLoaded) return;
 
@@ -156,18 +160,20 @@ export default function App() {
     };
     startup();
 
+    // 20 秒紅點定位更新
     const tLoc = setInterval(() => {
       navigator.geolocation.getCurrentPosition((p) => {
         setUserLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
       }, null, { enableHighAccuracy: true });
     }, 20000);
 
+    // 60 秒資料刷新
     const tData = setInterval(() => { fetchParkingData(currentCity.code, true); }, 60000);
 
     return () => { clearInterval(tLoc); clearInterval(tData); };
   }, [isLeafletLoaded, currentCity.code]);
 
-  // 3. 初始化地圖 (修復空白問題)
+  // 3. 初始化地圖
   useEffect(() => {
     if (isLeafletLoaded && !isInitializing && mapContainerRef.current && !mapInstanceRef.current) {
       const L = window.L;
@@ -179,7 +185,7 @@ export default function App() {
     }
   }, [isLeafletLoaded, isInitializing]);
 
-  // 4. 資料視覺化與藍色 P 標誌邏輯
+  // 4. 資料視覺化邏輯 (修正藍色 P 泡泡外觀)
   useEffect(() => {
     const dataArray = Array.isArray(allParkingData) ? allParkingData : [];
     const processed = dataArray.map(lot => {
@@ -188,9 +194,9 @@ export default function App() {
       const isUnknown = (available === -1 || isNaN(available));
       const plat = Number(lot?.lat);
       const plng = Number(lot?.lng);
-      const name = String(lot?.name || "未知");
+      const name = String(lot?.name || "未知場站");
       
-      let color = '#2563eb'; // 靜態藍色
+      let color = '#2563eb'; // 靜態場站專用藍
       let percentage = total > 0 ? available / total : 1; 
 
       if (!isUnknown) {
@@ -227,14 +233,14 @@ export default function App() {
     finally { setLoading(false); }
   };
 
-  // 6. 導航功能 (修復 window.open 問題)
+  // 6. 導航功能
   const handleNavigate = (lat, lng, name) => {
     if (!lat || !lng) return;
     const utterance = new SpeechSynthesisUtterance(`小企鵝即刻為您導航至 ${String(name)}。`);
     utterance.lang = 'zh-TW';
     window.speechSynthesis.speak(utterance);
     
-    // 解決部分行動裝置瀏覽器對非直接觸發 window.open 的限制
+    // 使用跳轉確保行動裝置相容性
     const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
     setTimeout(() => { window.location.href = mapUrl; }, 1500);
   };
@@ -244,7 +250,7 @@ export default function App() {
     return () => { delete window.handleNavigateGlobal; }; 
   }, []);
 
-  // 7. 點擊標記處理
+  // 7. 點擊標記播報
   const handleMarkerClick = (lot) => {
     let speakText = `${lot.name}。`;
     if (lot.isUnknown) speakText += `此為靜態場站，暫無即時數字。費率為：${lot.fare}。`;
@@ -254,7 +260,7 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 8. 標記渲染
+  // 8. 標記同步渲染 (優化泡泡外觀)
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -275,14 +281,14 @@ export default function App() {
         <div style="min-width: 220px; padding: 12px; color: white;">
           <b style="font-size:16px; color:#38bdf8; display:block; margin-bottom:4px;">${lot.name}</b>
           <div style="font-size:11px; color: #94a3b8; margin-bottom:8px;">
-            ${isStatic ? '📡 靜態位置資訊' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
+            ${isStatic ? '📡 靜態場站資訊' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
           </div>
           <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px; border-left: 4px solid ${lot.color}; line-height:1.4;">
             ${lot.fare}
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid rgba(255,255,255,0.1); padding-top:12px; margin-top:10px;">
              <div><div style="font-size:10px; color:#64748b;">${isStatic ? '狀態' : '剩餘位子'}</div><div style="font-size:24px; font-weight:900; color:${lot.color}; line-height:1;">${isStatic ? 'P' : lot.available}</div></div>
-             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px;">導航 GO</button>
+             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px; box-shadow: 0 4px 15px rgba(56,189,248,0.4);">導航 GO</button>
           </div>
         </div>
       `;
@@ -302,18 +308,21 @@ export default function App() {
     }
   }, [parkingData, userLocation]);
 
+  if (isInitializing) {
+    return (
+      <div className="h-screen w-screen bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
+        <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
+        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
+        <p className="text-slate-500 text-sm animate-pulse">正在鎖定衛星座標並同步縣市資訊...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-slate-900 font-sans text-slate-100 relative overflow-hidden">
       <style>{leafletStyle}</style>
 
-      {isInitializing && (
-        <div className="absolute inset-0 z-[5000] bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
-          <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
-          <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
-          <p className="text-slate-500 text-sm animate-pulse">正在鎖定衛星座標並同步縣市資訊...</p>
-        </div>
-      )}
-
+      {/* 標題與選單控制項 */}
       <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30 shadow-lg">
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-3">
@@ -348,7 +357,7 @@ export default function App() {
           </div>
         </div>
         <div className="mt-2 text-[9px] text-slate-400 flex items-center gap-1 opacity-80">
-          <Zap size={10} className="text-sky-400" /> <span className="text-blue-400 font-bold">藍色 P</span> 為靜態場站，彩色數字為即時車位
+          <Zap size={10} className="text-sky-400" /> <span className="text-blue-400 font-bold">藍色 P</span> 為靜態場站，其餘標註 * 提供即時數字
         </div>
       </div>
       
@@ -367,12 +376,12 @@ export default function App() {
                         <span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-mono">#{String(lot.id).slice(-4)}</span>
                         {lot.distance && <span className="text-[10px] font-black text-indigo-400">📡 {Number(lot.distance).toFixed(1)} km</span>}
                       </div>
-                      <h3 className="font-black text-slate-100 text-base leading-tight">${lot.name}</h3>
-                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">${lot.address}</p>
+                      <h3 className="font-black text-slate-100 text-base leading-tight">{lot.name}</h3>
+                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{lot.address}</p>
                     </div>
                     <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${lot.isUnknown ? 'border-blue-500 text-blue-500' : (Number(lot.available) < 10 ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500')}`}>
-                      <span className="text-xl font-black">${lot.isUnknown ? 'P' : lot.available}</span>
-                      <span className="text-[8px] font-bold uppercase tracking-tighter">${lot.isUnknown ? 'Static' : 'Seats'}</span>
+                      <span className="text-xl font-black">{lot.isUnknown ? 'P' : Number(lot.available)}</span>
+                      <span className="text-[8px] font-bold uppercase tracking-tighter">{lot.isUnknown ? 'Static' : 'Seats'}</span>
                     </div>
                  </div>
                </div>
