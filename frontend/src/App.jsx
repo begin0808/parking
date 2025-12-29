@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X } from 'lucide-react';
+import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X, Navigation2 } from 'lucide-react';
 
 // ---------------------------------------------------------
 // 縣市資料定義
@@ -45,19 +45,20 @@ const leafletStyle = `
     position: absolute; z-index: 10; font-weight: 900; font-size: 15px;
     transform: rotate(45deg); color: #0f172a; text-shadow: 0 0 2px white;
   }
-  /* 原本的灰色泡泡 */
+  
+  /* 灰色偵測泡泡 */
   .marker-pin.grey { background-color: #94a3b8 !important; width: 34px; height: 34px; margin: -17px 0 0 -17px; }
   
-  /* 額外新增的咖啡色 P 泡泡 */
-  .marker-pin.coffee {
-    background-color: #78350f !important;
+  /* 藍色全量場站標誌 (原本咖啡色更改為藍色) */
+  .marker-pin.blue-static {
+    background-color: #3b82f6 !important; /* 藍色 */
     width: 28px; height: 28px; margin: -14px 0 0 -14px;
   }
-  .marker-pin.coffee .marker-text {
+  .marker-pin.blue-static .marker-text {
     color: white; text-shadow: none; font-size: 14px; font-weight: 800;
   }
   .marker-pin::after { content: ''; width: 26px; height: 26px; margin: 8px 0 0 8px; background: #ffffff; position: absolute; border-radius: 50%; opacity: 0.2; }
-  .marker-pin.coffee::after { width: 14px; height: 14px; margin: 7px 0 0 7px; }
+  .marker-pin.blue-static::after { width: 14px; height: 14px; margin: 7px 0 0 7px; }
   
   .leaflet-popup-content-wrapper { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-radius: 24px; color: white; border: 1px solid rgba(255, 255, 255, 0.2); }
   .leaflet-popup-tip { background: rgba(15, 23, 42, 0.95); }
@@ -74,18 +75,13 @@ const leafletStyle = `
     100% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0); }
   }
   .btn-locate-glow {
-    background: #ff3333 !important;
-    color: white !important;
-    border-color: #ff6666 !important;
-    box-shadow: 0 0 15px rgba(255, 51, 51, 0.5) !important;
+    background: #ff3333 !important; color: white !important; border-color: #ff6666 !important; box-shadow: 0 0 15px rgba(255, 51, 51, 0.5) !important;
   }
 `;
 
 const PenguinLogo = () => (
   <svg viewBox="0 0 100 100" className="w-12 h-12 drop-shadow-[0_0_8px_rgba(0,210,255,0.6)]">
-    <defs>
-      <linearGradient id="pBack" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style={{ stopColor: '#334155' }} /><stop offset="100%" style={{ stopColor: '#0f172a' }} /></linearGradient>
-    </defs>
+    <defs><linearGradient id="pBack" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style={{ stopColor: '#334155' }} /><stop offset="100%" style={{ stopColor: '#0f172a' }} /></linearGradient></defs>
     <circle cx="50" cy="50" r="46" fill="none" stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="15 10" className="animate-[spin_8s_linear_infinite] opacity-60" />
     <path d="M50 20 C30 20 22 35 22 55 C22 80 35 90 50 90 C65 90 78 80 78 55 C78 35 70 20 50 20 Z" fill="url(#pBack)" />
     <path d="M50 38 C40 38 32 48 32 62 C32 75 40 85 50 85 C60 85 68 75 68 62 C68 48 60 38 50 38 Z" fill="#ffffff" />
@@ -102,7 +98,7 @@ const SEARCH_RADIUS_KM = 5;
 export default function App() {
   const [currentCity, setCurrentCity] = useState(TAIWAN_CITIES[13]); 
   const [allParkingData, setAllParkingData] = useState([]);
-  const [parkingData, setParkingData] = useState([]);
+  const [parkingData, setParkingData] = useState([]); 
   const [loading, setLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true); 
   const [userLocation, setUserLocation] = useState(null);
@@ -135,7 +131,6 @@ export default function App() {
     return nearest;
   };
 
-  // 1. 載入框架
   useEffect(() => {
     if (window.L && window.L.map) { setIsLeafletLoaded(true); return; }
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -145,10 +140,8 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // 2. 自動化排程 (定位啟動)
   useEffect(() => {
     if (!isLeafletLoaded) return;
-
     const startup = () => {
       if (!navigator.geolocation) { setIsInitializing(false); fetchParkingData(currentCity.code); return; }
       navigator.geolocation.getCurrentPosition(
@@ -167,20 +160,23 @@ export default function App() {
     };
     startup();
 
-    // 20s 更新定位
     const tLoc = setInterval(() => {
       navigator.geolocation.getCurrentPosition((p) => {
         setUserLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
       }, null, { enableHighAccuracy: true });
     }, 20000);
 
-    // 60s 更新資料
     const tData = setInterval(() => { fetchParkingData(currentCity.code, true); }, 60000);
 
-    return () => { clearInterval(tLoc); clearInterval(tData); };
+    const tMap = setInterval(() => {
+      if (userLocation && mapInstanceRef.current && viewMode === 'map') {
+        mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 13, { animate: true });
+      }
+    }, 60000);
+
+    return () => { clearInterval(tLoc); clearInterval(tData); clearInterval(tMap); };
   }, [isLeafletLoaded, currentCity.code]);
 
-  // 3. 初始化地圖
   useEffect(() => {
     if (isLeafletLoaded && !isInitializing && mapContainerRef.current && !mapInstanceRef.current) {
       const L = window.L;
@@ -192,7 +188,6 @@ export default function App() {
     }
   }, [isLeafletLoaded, isInitializing]);
 
-  // 4. 資料處理與分類視覺化
   useEffect(() => {
     const dataArray = Array.isArray(allParkingData) ? allParkingData : [];
     const processed = dataArray.map(lot => {
@@ -204,8 +199,8 @@ export default function App() {
       const name = String(lot?.name || "未知");
       const isDynamicCapable = !!lot.isDynamicCapable; 
 
-      let color = '#78350f'; // 預設咖啡色 (額外場站)
-      let markerType = 'coffee';
+      let color = '#3b82f6'; // 咖啡色更換為藍色 (全量場站)
+      let markerType = 'blue-static';
       let percentage = total > 0 ? available / total : 1; 
 
       if (!isUnknown) {
@@ -229,9 +224,9 @@ export default function App() {
 
     const filtered = processed.filter(lot => lot.distance !== null && lot.distance <= SEARCH_RADIUS_KM).sort((a, b) => (a.distance || 0) - (b.distance || 0));
     setParkingData(filtered.length > 0 ? filtered : processed.slice(0, 150));
+    
   }, [allParkingData, userLocation]);
 
-  // 5. 數據抓取
   const fetchParkingData = async (cityCode, isBackground = false) => {
     if (!isBackground) setLoading(true);
     try {
@@ -246,26 +241,20 @@ export default function App() {
     finally { setLoading(false); }
   };
 
-  // 6. 手動定位動作 (NEW)
   const handleLocateMe = () => {
     if (!navigator.geolocation) return;
     setLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
+    navigator.geolocation.getCurrentPosition((p) => {
         const loc = { lat: p.coords.latitude, lng: p.coords.longitude };
         setUserLocation(loc);
         if (mapInstanceRef.current) mapInstanceRef.current.setView([loc.lat, loc.lng], 15, { animate: true });
         setLoading(false);
-        const utterance = new SpeechSynthesisUtterance("已重新定位雷達中心。");
+        const utterance = new SpeechSynthesisUtterance("已重新校準雷達中心。");
         utterance.lang = 'zh-TW';
         window.speechSynthesis.speak(utterance);
-      },
-      () => setLoading(false),
-      { enableHighAccuracy: true }
-    );
+      }, () => setLoading(false), { enableHighAccuracy: true });
   };
 
-  // 7. 導航功能
   const handleNavigate = (lat, lng, name) => {
     if (!lat || !lng) return;
     const utterance = new SpeechSynthesisUtterance(`小企鵝即刻為您導航至 ${String(name)}。`);
@@ -274,23 +263,18 @@ export default function App() {
     setTimeout(() => { window.location.href = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`; }, 1500);
   };
 
-  useEffect(() => { 
-    window.handleNavigateGlobal = handleNavigate; 
-    return () => { delete window.handleNavigateGlobal; }; 
-  }, []);
+  useEffect(() => { window.handleNavigateGlobal = handleNavigate; return () => { delete window.handleNavigateGlobal; }; }, []);
 
-  // 8. 點擊標記播報
   const handleMarkerClick = (lot) => {
     let speakText = `${lot.name}。`;
-    if (lot.markerType === 'coffee') speakText += `此為全量資料庫場站。費率為：${lot.fare}。`;
-    else if (lot.isUnknown) speakText += `偵測場站目前無即時資訊。費率為：${lot.fare}。`;
-    else speakText += `目前剩餘 ${lot.available} 格。費率為：${lot.fare}。`;
+    if (lot.markerType === 'blue-static') speakText += `此為全量資料庫場站。費率：${lot.fare}。`;
+    else if (lot.isUnknown) speakText += `偵測場站目前無即時資訊。費率：${lot.fare}。`;
+    else speakText += `目前剩餘 ${lot.available} 格。費率：${lot.fare}。`;
     const utterance = new SpeechSynthesisUtterance(speakText);
     utterance.lang = 'zh-TW';
     window.speechSynthesis.speak(utterance);
   };
 
-  // 9. 標記同步渲染
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -300,14 +284,14 @@ export default function App() {
     currentMarkers.forEach((marker, id) => { if (!activeIds.has(String(id))) { map.removeLayer(marker); currentMarkers.delete(id); } });
 
     dataToRender.forEach(lot => {
-      const isCoffee = lot.markerType === 'coffee';
+      const isBlue = lot.markerType === 'blue-static';
       const isGrey = lot.markerType === 'grey';
       
       const iconSettings = { 
         className: 'custom-marker', 
-        html: `<div class="marker-pin ${isCoffee ? 'coffee' : (isGrey ? 'grey' : '')}" style="background-color: ${lot.color};"><span class="marker-text">${isCoffee ? 'P' : (isGrey ? '?' : lot.available)}</span></div>`, 
-        iconSize: isCoffee ? [28, 28] : [42, 42], 
-        iconAnchor: isCoffee ? [14, 28] : [21, 42], 
+        html: `<div class="marker-pin ${isBlue ? 'blue-static' : (isGrey ? 'grey' : '')}" style="background-color: ${lot.color};"><span class="marker-text">${isBlue ? 'P' : (isGrey ? '?' : lot.available)}</span></div>`, 
+        iconSize: isBlue ? [28, 28] : [42, 42], 
+        iconAnchor: isBlue ? [14, 28] : [21, 42], 
         popupAnchor: [0, -28] 
       };
 
@@ -315,14 +299,14 @@ export default function App() {
         <div style="min-width: 210px; padding: 12px; color: white;">
           <b style="font-size:16px; color:#38bdf8; display:block; margin-bottom:4px;">${lot.name}</b>
           <div style="font-size:11px; color: #94a3b8; margin-bottom:8px;">
-            ${isCoffee ? '🏢 全量資料場站' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
+            ${isBlue ? '🏢 全量資料庫場站' : `🏢 總位數: ${lot.total || '未知'}`} | 📡 ${lot.distance ? Number(lot.distance).toFixed(1) : '?'}km
           </div>
           <div style="margin: 8px 0; font-size:12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px; border-left: 4px solid ${lot.color}; line-height:1.4;">
             ${lot.fare}
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid rgba(255,255,255,0.1); padding-top:12px; margin-top:10px;">
-             <div><div style="font-size:10px; color:#64748b;">${isCoffee ? '類型' : '剩餘位子'}</div><div style="font-size:24px; font-weight:900; color:${lot.color}; line-height:1;">${isCoffee ? 'P' : (isGrey ? '?' : lot.available)}</div></div>
-             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px;">導航 GO</button>
+             <div><div style="font-size:10px; color:#64748b;">${isBlue ? '類型' : '剩餘位子'}</div><div style="font-size:24px; font-weight:900; color:${lot.color}; line-height:1;">${isBlue ? 'P' : (isGrey ? '?' : lot.available)}</div></div>
+             <button onclick="window.handleNavigateGlobal(${lot.lat}, ${lot.lng}, '${lot.name}')" style="background:#38bdf8; color:#0f172a; border:none; padding:10px 20px; border-radius:12px; font-weight:bold; cursor:pointer; font-size:14px; box-shadow: 0 4px 15px rgba(56,189,248,0.4);">導航 GO</button>
           </div>
         </div>
       `;
@@ -346,8 +330,8 @@ export default function App() {
     return (
       <div className="h-screen w-screen bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
         <div className="relative mb-10"><PenguinLogo /><div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div></div>
-        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達定位中</h1>
-        <p className="text-slate-500 text-sm animate-pulse">正在向衛星請求座標並掃描周邊停車場...</p>
+        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達同步中</h1>
+        <p className="text-slate-500 text-sm animate-pulse uppercase font-black tracking-widest">正在鎖定衛星座標並同步縣市資訊...</p>
       </div>
     );
   }
@@ -356,9 +340,9 @@ export default function App() {
     <div className="flex flex-col h-screen bg-slate-900 font-sans text-slate-100 relative overflow-hidden">
       <style>{leafletStyle}</style>
 
-      {/* 標題與控制項 */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30 shadow-lg">
-        <div className="flex justify-between items-center mb-4">
+      {/* 標題與控制欄 */}
+      <div className="absolute top-0 left-0 right-0 z-[1500] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30 shadow-lg space-y-3">
+        <div className="flex justify-between items-center">
           <div className="flex items-center gap-3">
             <PenguinLogo />
             <div>
@@ -370,12 +354,13 @@ export default function App() {
             </div>
           </div>
           <div className="flex gap-2">
-             <button onClick={handleLocateMe} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-red-500 active:scale-95 shadow-sm"><LocateFixed size={18} /></button>
-             <button onClick={() => fetchParkingData(currentCity.code)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
-             <button onClick={() => setShowInstructions(true)} className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm"><Info size={18} /></button>
+             <button onClick={handleLocateMe} title="手動重新定位" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-red-500 active:scale-95 shadow-sm transition-all"><LocateFixed size={18} /></button>
+             <button onClick={() => fetchParkingData(currentCity.code)} title="刷新資料" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm transition-all"><RotateCw size={18} className={loading ? 'animate-spin' : ''} /></button>
+             <button onClick={() => setShowInstructions(true)} title="說明" className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sky-400 active:scale-95 shadow-sm transition-all"><Info size={18} /></button>
           </div>
         </div>
-        <div className="flex gap-3 h-10">
+        
+        <div className="flex gap-2 h-10 items-center">
           <div className="relative flex-1">
             <select value={currentCity.code} onChange={(e) => {
               const selected = TAIWAN_CITIES.find(c => c.code === e.target.value);
@@ -387,17 +372,20 @@ export default function App() {
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-sky-500 pointer-events-none" size={14} />
           </div>
-          <div className="bg-slate-800/50 p-1 rounded-xl flex border border-slate-700">
-            <button onClick={() => setViewMode('map')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'map' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>雷達</button>
-            <button onClick={() => setViewMode('list')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'list' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>清單</button>
+          <div className="bg-slate-800/50 p-1 rounded-xl flex border border-slate-700 h-10 w-44">
+            <button onClick={() => setViewMode('map')} className={`flex-1 rounded-lg text-[10px] font-black transition-all ${viewMode === 'map' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>雷達圖層</button>
+            <button onClick={() => setViewMode('list')} className={`flex-1 rounded-lg text-[10px] font-black transition-all ${viewMode === 'list' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>清單模式</button>
           </div>
+        </div>
+        <div className="text-[9px] text-slate-400 flex items-center gap-1 opacity-80 font-medium">
+          <Zap size={10} className="text-sky-400" /> <span className="text-blue-500 font-bold">藍色 P</span> 為全量場站，其餘標註 * 提供即時數字
         </div>
       </div>
       
       <div className="flex-1 relative bg-slate-900">
         <div id="map-wrap" className={`absolute inset-0 ${viewMode === 'map' ? 'z-10' : 'z-0 opacity-0 pointer-events-none'}`}>
            <div ref={mapContainerRef} className="w-full h-full" />
-           {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl">更新資料中...</div>}
+           {loading && <div className="absolute top-48 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl animate-pulse">更新中...</div>}
         </div>
         <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-44 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
            <div className="space-y-3">
@@ -405,16 +393,13 @@ export default function App() {
                <div key={String(lot.id)} onClick={() => { setViewMode('map'); if(mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16, {animate:true}); }} className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700 active:scale-95 transition-all">
                  <div className="flex justify-between items-start">
                     <div className="flex-1 mr-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-mono">#{String(lot.id).slice(-4)}</span>
-                        {lot.distance && <span className="text-[10px] font-black text-indigo-400">📡 {Number(lot.distance).toFixed(1)} km</span>}
-                      </div>
+                      <div className="flex items-center gap-2 mb-1"><span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-mono">#{String(lot.id).slice(-4)}</span>{lot.distance && <span className="text-[10px] font-black text-indigo-400">📡 {Number(lot.distance).toFixed(1)} km</span>}</div>
                       <h3 className="font-black text-slate-100 text-base leading-tight">${lot.name}</h3>
                       <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">${lot.address}</p>
                     </div>
-                    <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${lot.markerType === 'coffee' ? 'border-amber-700 text-amber-600' : (lot.markerType === 'grey' ? 'border-slate-500 text-slate-400' : (Number(lot.available) < 10 ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500'))}`}>
-                      <span className="text-xl font-black">${lot.markerType === 'coffee' ? 'P' : (lot.markerType === 'grey' ? '?' : Number(lot.available))}</span>
-                      <span className="text-[8px] font-bold uppercase tracking-tighter">${lot.markerType === 'coffee' ? 'Static' : 'Seats'}</span>
+                    <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${lot.markerType === 'blue-static' ? 'border-blue-500 text-blue-500' : (lot.markerType === 'grey' ? 'border-slate-500 text-slate-400' : (Number(lot.available) < 10 ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500'))}`}>
+                      <span className="text-xl font-black">${lot.markerType === 'blue-static' ? 'P' : (lot.markerType === 'grey' ? '?' : Number(lot.available))}</span>
+                      <span className="text-[8px] font-bold uppercase tracking-tighter">${lot.markerType === 'blue-static' ? 'Static' : 'Seats'}</span>
                     </div>
                  </div>
                </div>
@@ -424,38 +409,30 @@ export default function App() {
       </div>
 
       {showInstructions && (
-        <div className="absolute inset-0 z-[2000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md">
+        <div className="absolute inset-0 z-[5000] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md">
           <div className="bg-slate-800 border border-sky-500/50 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in duration-300">
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 text-left">
               <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3"><Info className="text-sky-400" size={24} /><h2 className="text-xl font-black text-white">使用說明</h2></div>
+                <div className="flex items-center gap-3"><Info className="text-sky-400" size={24} /><h2 className="text-xl font-black text-white">操作說明</h2></div>
                 <button onClick={() => setShowInstructions(false)} className="p-2 text-slate-400 hover:text-white"><X size={24} /></button>
               </div>
               <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
-                <div className="flex gap-4 items-start bg-slate-900/50 p-3 rounded-2xl">
-                  <div className="text-2xl">🐧</div>
-                  <div><p className="font-bold text-sky-400">自動定位模式</p><p>系統啟動後會自動抓取您的位置，判定所在縣市並同步 5 公里內的停車場。</p></div>
+                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-xl border border-slate-700 items-center">
+                  <div className="text-2xl text-red-500"><LocateFixed size={28} /></div>
+                  <div><p className="font-bold text-white">手動定位</p><p>移動或視野偏移時，點擊紅色定位鈕可回歸目前位置中心。</p></div>
                 </div>
-                <div className="flex gap-4 items-start bg-slate-900/50 p-3 rounded-2xl">
-                  <div className="text-2xl text-red-500"><LocateFixed size={24} /></div>
-                  <div><p className="font-bold text-white">手動定位按鈕</p><p>當您移動或視野偏移時，按此按鈕可重新鎖定紅點中心。</p></div>
+                <div className="flex gap-4 p-3 bg-slate-900/50 rounded-xl border border-slate-700 items-center">
+                  <div className="text-2xl text-sky-400">🐧</div>
+                  <div><p className="font-bold text-white">雷達更新</p><p>系統每 60 秒會自動發射波束，更新方圓 5 公里內的空位資訊。</p></div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <div className="flex items-center gap-2 bg-emerald-500/20 p-2 rounded-xl border border-emerald-500/30">
-                    <div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-[10px]">綠色：位子充足</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-rose-500/20 p-2 rounded-xl border border-rose-500/30">
-                    <div className="w-3 h-3 rounded-full bg-rose-500"></div><span className="text-[10px]">紅色：目前滿位</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-amber-700/20 p-2 rounded-xl border border-amber-700/30">
-                    <div className="w-3 h-3 rounded-full bg-amber-700"></div><span className="text-[10px]">咖啡 P：靜態場站</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-slate-500/20 p-2 rounded-xl border border-slate-500/30">
-                    <div className="w-3 h-3 rounded-full bg-slate-400"></div><span className="text-[10px]">灰色 ?：連線暫斷</span>
-                  </div>
+                <div className="grid grid-cols-2 gap-2 mt-2 font-bold">
+                   <div className="bg-emerald-500/20 p-2 rounded-xl text-emerald-400 border border-emerald-500/20">● 綠色：位子充足</div>
+                   <div className="bg-blue-600/20 p-2 rounded-xl text-blue-500 border border-blue-600/20">● 藍色 P：靜態場站</div>
+                   <div className="bg-rose-500/20 p-2 rounded-xl text-rose-400 border border-rose-500/20">● 紅色：目前滿位</div>
+                   <div className="bg-slate-500/20 p-2 rounded-xl text-slate-400 border border-slate-500/20">● 灰色 ?：偵測中</div>
                 </div>
               </div>
-              <button onClick={() => setShowInstructions(false)} className="w-full bg-sky-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">開始使用</button>
+              <button onClick={() => setShowInstructions(false)} className="w-full bg-sky-500 text-white font-black py-4 rounded-2xl active:scale-95 transition-all">開始掃描</button>
             </div>
           </div>
         </div>
