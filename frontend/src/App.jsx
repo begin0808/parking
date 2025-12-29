@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Map as MapIcon, Navigation, RotateCw, Car, MapPin, List, Database, ChevronDown, Coins, LocateFixed, Zap, Info, X } from 'lucide-react';
 
 // ---------------------------------------------------------
-// 縣市資料定義
+// 縣市資料定義 (包含經緯度座標供距離計算與切換)
 // ---------------------------------------------------------
 const TAIWAN_CITIES = [
   { code: 'Keelung', name: '基隆市 *', lat: 25.1276, lng: 121.7392, hasDynamic: true },
@@ -64,7 +64,7 @@ const leafletStyle = `
 `;
 
 // ---------------------------------------------------------
-// 圓滾滾小企鵝 Logo
+// 圓滾滾小企鵝 Logo (更加胖胖可愛版)
 // ---------------------------------------------------------
 const PenguinLogo = () => (
   <svg viewBox="0 0 100 100" className="w-12 h-12 drop-shadow-[0_0_8px_rgba(0,210,255,0.6)]">
@@ -82,14 +82,14 @@ const PenguinLogo = () => (
 );
 
 const API_BASE = 'https://script.google.com/macros/s/AKfycbzB4JwfxZlnkysWOSDQ9Fpp-PaPvo4bOk95Wi9Gh8TV-bH35gukiFG0xfHlEQqOX8hQ/exec';
-const SEARCH_RADIUS_KM = 5; // 使用者要求方圓 5 公里
+const SEARCH_RADIUS_KM = 5; 
 
 export default function App() {
-  const [currentCity, setCurrentCity] = useState(TAIWAN_CITIES[13]); // 初始顯示 Tainan，直到定位完成
+  const [currentCity, setCurrentCity] = useState(TAIWAN_CITIES[13]); // 預設台南
   const [allParkingData, setAllParkingData] = useState([]);
   const [parkingData, setParkingData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true); // 初始啟動畫面
+  const [isInitializing, setIsInitializing] = useState(true); 
   const [userLocation, setUserLocation] = useState(null);
   const [viewMode, setViewMode] = useState('map');
 
@@ -131,18 +131,17 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // 2. 啟動與自動化排程邏輯
+  // 2. 啟動與自動化排程邏輯 (修復地圖空白關鍵：移除 return Early)
   useEffect(() => {
     if (!isLeafletLoaded) return;
 
-    // A. 系統導入時先抓定位 (核心要求 4)
-    const initStartup = () => {
+    // A. 導入時定位判定縣市
+    const runStartup = () => {
       if (!navigator.geolocation) {
         setIsInitializing(false);
         fetchParkingData(currentCity.code);
         return;
       }
-
       navigator.geolocation.getCurrentPosition(
         (p) => {
           const loc = { lat: p.coords.latitude, lng: p.coords.longitude };
@@ -151,59 +150,57 @@ export default function App() {
           setCurrentCity(city);
           fetchParkingData(city.code);
           setIsInitializing(false);
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.setView([loc.lat, loc.lng], 13);
-          }
         },
         () => {
           setIsInitializing(false);
           fetchParkingData(currentCity.code);
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 8000 }
       );
     };
+    runStartup();
 
-    initStartup();
-
-    // B. 排程更新 1：每 20 秒更新使用者定位 (核心要求 1)
-    const locTimer = setInterval(() => {
+    // B. 每 20 秒更新紅點定位
+    const locInterval = setInterval(() => {
       navigator.geolocation.getCurrentPosition((p) => {
         setUserLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
       }, null, { enableHighAccuracy: true });
     }, 20000);
 
-    // C. 排程更新 2：每 60 秒更新停車場資訊 (核心要求 2)
-    const dataTimer = setInterval(() => {
-      // 依據目前選定的縣市抓取資料
+    // C. 每 60 秒更新停車資料
+    const dataInterval = setInterval(() => {
       fetchParkingData(currentCity.code, true);
     }, 60000);
 
-    // D. 排程更新 3：每 60 秒更新地圖中心至使用者 5km 範圍 (核心要求 3)
-    const mapTimer = setInterval(() => {
+    // D. 每 60 秒同步中心至 5km 範圍
+    const mapSyncInterval = setInterval(() => {
       if (userLocation && mapInstanceRef.current) {
         mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 13, { animate: true });
       }
     }, 60000);
 
     return () => {
-      clearInterval(locTimer);
-      clearInterval(dataTimer);
-      clearInterval(mapTimer);
+      clearInterval(locInterval);
+      clearInterval(dataInterval);
+      clearInterval(mapSyncInterval);
     };
   }, [isLeafletLoaded, currentCity.code]);
 
-  // 3. 初始化地圖
+  // 3. 地圖初始化邏輯 (關鍵修復：監聽 isInitializing)
   useEffect(() => {
-    if (isLeafletLoaded && mapContainerRef.current && !mapInstanceRef.current) {
+    if (isLeafletLoaded && !isInitializing && mapContainerRef.current && !mapInstanceRef.current) {
       const L = window.L;
-      const map = L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false }).setView([currentCity.lat, currentCity.lng], 14);
+      const map = L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false }).setView([currentCity.lat, currentCity.lng], 13);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
       mapInstanceRef.current = map;
+      
+      // 強制修正地圖尺寸
+      setTimeout(() => map.invalidateSize(), 300);
     }
-  }, [isLeafletLoaded]);
+  }, [isLeafletLoaded, isInitializing]);
 
-  // 4. 資料處理與泡泡顏色邏輯 (修復 iterable 錯誤)
+  // 4. 資料處理與泡泡顯示 (確保不因 false is not iterable 崩潰)
   useEffect(() => {
     const dataArray = Array.isArray(allParkingData) ? allParkingData : [];
     
@@ -232,9 +229,7 @@ export default function App() {
       };
     });
 
-    // 依據距離過濾 (5km) 並排序
     const filtered = processed.filter(lot => lot.distance !== null && lot.distance <= SEARCH_RADIUS_KM).sort((a, b) => (a.distance || 0) - (b.distance || 0));
-    // 如果雷達範圍內沒資料，則顯示全區前 100 筆
     setParkingData(filtered.length > 0 ? filtered : processed.slice(0, 100));
     
   }, [allParkingData, userLocation]);
@@ -263,13 +258,12 @@ export default function App() {
     const selected = TAIWAN_CITIES.find(c => c.code === e.target.value);
     if (!selected) return;
     setCurrentCity(selected);
-    if (mapInstanceRef.current) mapInstanceRef.current.setView([selected.lat, selected.lng], 14, { animate: true });
+    if (mapInstanceRef.current) mapInstanceRef.current.setView([selected.lat, selected.lng], 13, { animate: true });
     fetchParkingData(selected.code);
   };
 
   const handleNavigate = (lat, lng, name) => {
-    const speakText = `小企鵝即刻為您導航至 ${String(name)}。`;
-    const utterance = new SpeechSynthesisUtterance(speakText);
+    const utterance = new SpeechSynthesisUtterance(`小企鵝即刻為您導航至 ${String(name)}。`);
     utterance.lang = 'zh-TW';
     window.speechSynthesis.speak(utterance);
     setTimeout(() => { window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank'); }, 1800);
@@ -277,7 +271,7 @@ export default function App() {
 
   useEffect(() => { window.handleNavigateGlobal = handleNavigate; return () => { delete window.handleNavigateGlobal; }; }, []);
 
-  // 7. 標記渲染同步 (包含紅點更新)
+  // 7. 標記渲染同步
   useEffect(() => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L; const map = mapInstanceRef.current; const currentMarkers = markersRef.current;
@@ -290,7 +284,7 @@ export default function App() {
       const iconSettings = { 
         className: 'custom-marker', 
         html: `<div class="marker-pin ${lot.isUnknown ? 'small' : ''}" style="background-color: ${lot.color};"><span class="marker-text">${lot.isUnknown ? '?' : lot.available}</span></div>`, 
-        iconSize: lot.isUnknown ? [26, 26] : [42, 42], iconAnchor: lot.isUnknown ? [13, 13] : [21, 42], popupAnchor: lot.isUnknown ? [0, -13] : [0, -42] 
+        iconSize: lot.isUnknown ? [26, 26] : [42, 42], iconAnchor: lot.isUnknown ? [21, 42] : [21, 42], popupAnchor: [0, -42] 
       };
 
       const popupHtml = `
@@ -320,24 +314,21 @@ export default function App() {
     }
   }, [parkingData, userLocation]);
 
-  // 初始定位 loading 畫面
-  if (isInitializing) {
-    return (
-      <div className="h-screen w-screen bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
-        <div className="relative mb-10">
-          <PenguinLogo />
-          <div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div>
-        </div>
-        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達啟動中</h1>
-        <p className="text-slate-500 text-sm animate-pulse">正在掃描衛星位置並載入縣市資料...</p>
-        <p className="text-[10px] text-slate-600 mt-10">請務必「允許」瀏覽器存取位置權限</p>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-screen bg-slate-900 font-sans text-slate-100 relative overflow-hidden">
       <style>{leafletStyle}</style>
+
+      {/* 初始啟動全屏 Overlay */}
+      {isInitializing && (
+        <div className="absolute inset-0 z-[5000] bg-slate-900 flex flex-col items-center justify-center text-slate-100 p-10 text-center">
+          <div className="relative mb-10">
+            <PenguinLogo />
+            <div className="absolute inset-0 animate-ping rounded-full border-4 border-sky-500/30 scale-150"></div>
+          </div>
+          <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mb-2">小企鵝雷達啟動中</h1>
+          <p className="text-slate-500 text-sm animate-pulse">正在掃描衛星位置並載入縣市資料...</p>
+        </div>
+      )}
 
       {/* 標題與選單控制項 */}
       <div className="absolute top-0 left-0 right-0 z-[1000] px-4 py-4 bg-slate-900/80 backdrop-blur-xl border-b border-sky-500/30">
@@ -348,7 +339,7 @@ export default function App() {
               <h1 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 leading-none">小企鵝停車雷達</h1>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">動態偵測已開啟</span>
+                <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest">運動偵測模式</span>
               </div>
             </div>
           </div>
@@ -365,21 +356,24 @@ export default function App() {
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-sky-500 pointer-events-none" size={14} />
           </div>
           <div className="bg-slate-800/50 p-1 rounded-xl flex border border-slate-700">
-            <button onClick={() => setViewMode('map')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'map' ? 'bg-sky-500 text-white' : 'text-slate-400'}`}>雷達</button>
-            <button onClick={() => setViewMode('list')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'list' ? 'bg-sky-500 text-white' : 'text-slate-400'}`}>清單</button>
+            <button onClick={() => setViewMode('map')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'map' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>雷達</button>
+            <button onClick={() => setViewMode('list')} className={`px-4 rounded-lg text-[10px] font-black transition-all ${viewMode === 'list' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/30' : 'text-slate-400'}`}>清單</button>
           </div>
+        </div>
+        <div className="mt-2 text-[9px] text-slate-400 flex items-center gap-1 opacity-80">
+          <Zap size={10} className="text-sky-400" /> 標註 * 號之縣市提供即時車位查詢
         </div>
       </div>
       
       <div className="flex-1 relative bg-slate-900">
         <div className={`absolute inset-0 ${viewMode === 'map' ? 'z-10' : 'z-0 opacity-0 pointer-events-none'}`}>
            <div ref={mapContainerRef} className="w-full h-full" />
-           {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl">更新資料中...</div>}
+           {loading && <div className="absolute top-40 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-xs font-bold shadow-2xl animate-bounce">掃描中...</div>}
         </div>
-        <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-44 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
+        <div className={`absolute inset-0 bg-slate-900 overflow-y-auto px-4 pt-48 pb-10 transition-transform duration-500 ${viewMode === 'list' ? 'translate-y-0 z-20' : 'translate-y-full'}`}>
            <div className="space-y-3">
              {parkingData.map(lot => (
-               <div key={lot.id} onClick={() => { setViewMode('map'); if(mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16); }} className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700 active:scale-95 transition-all">
+               <div key={String(lot.id)} onClick={() => { setViewMode('map'); if(mapInstanceRef.current) mapInstanceRef.current.setView([lot.lat, lot.lng], 16, {animate:true}); }} className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700 active:scale-95 transition-all">
                  <div className="flex justify-between items-start">
                     <div className="flex-1 mr-2">
                       <div className="flex items-center gap-2 mb-1">
@@ -391,7 +385,7 @@ export default function App() {
                     </div>
                     <div className={`flex flex-col items-center justify-center min-w-[60px] h-[60px] rounded-xl border-2 ${Number(lot.available) < 10 && !lot.isUnknown ? 'border-rose-500 text-rose-500' : 'border-emerald-500 text-emerald-500'}`}>
                       <span className="text-xl font-black" style={{ color: lot.color }}>{lot.isUnknown ? '?' : Number(lot.available)}</span>
-                      <span className="text-[8px] font-bold uppercase tracking-tighter">Seats</span>
+                      <span className="text-[8px] font-bold uppercase">Seats</span>
                     </div>
                  </div>
                </div>
